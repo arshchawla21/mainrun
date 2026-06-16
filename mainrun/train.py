@@ -3,6 +3,7 @@ import math, random, time
 from dataclasses import dataclass
 import json
 from pathlib import Path
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -11,12 +12,15 @@ from torch.nn import functional as F
 from datasets import load_dataset
 from tqdm import tqdm
 import structlog
+import shutil
+import subprocess
 
 from model.tokenizer import train_tokenizer, BPETokenizer
 from model.gpt import GPTConfig, CausalSelfAttention, GPT
 
 @dataclass
 class Hyperparameters:
+    attn_type: str = 'MHA' 
     block_size: int = 128
     batch_size: int = 64
     vocab_size: int = 16_000
@@ -33,6 +37,15 @@ class Hyperparameters:
     num_titles: int = 100_000
     val_frac: float = 0.10
     log_file: str = "./logs/mainrun.log"
+
+    # experiment tracking
+    wandb: bool = False
+    wandb_project: str = "mainrun"
+    wandb_run_name: Optional[str] = None
+
+    # checkpointing
+    save_checkpoint: bool = False
+    out_root: str = "runs"
 
 def configure_logging(log_file: str):
     Path(log_file).parent.mkdir(parents=True, exist_ok=True)
@@ -80,6 +93,15 @@ def configure_logging(log_file: str):
 
 logger = None
 
+def _git_short_hash() -> str:
+    """Short hash of the current commit, so a run folder is traceable to the code that made it."""
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL, text=True).strip()
+    except Exception:
+        return "nogit"
+
 def get_titles(num_titles: int, seed: int, val_frac: float) -> str:
     ds = load_dataset("julien040/hacker-news-posts", split="train", cache_dir="./data").shuffle(seed=seed)
     titles = [row["title"].strip() for row in ds.take(num_titles)]
@@ -103,13 +125,64 @@ def iter_full_split(split_ids: torch.Tensor, block_size: int, batch_size: int, d
         y = batch[1:].view(batch_size, block_size).to(device)
         yield x, y
 
-def main():
-    args = Hyperparameters()
+def save_run(result: dict, base_dir: str = "../sweeps", tag: str = "run") -> Path:
+    """
+    Persist one finished run into  base_dir/{tag}_{time}_valloss{X}/  containing:
+      - config.json    : the exact Hyperparameters used
+      - model.pt       : weights + GPTConfig + final val loss (everything needed to sample)
+      - tokenizer.json : the trained tokenizer (so samples decode correctly)
+      - mainrun.log    : a copy of the training log
+    """
+    args     = result["args"]
+    val_loss = result["val_loss"]
+    ts       = time.strftime("%Y%m%d-%H%M%S")
+    run_dir  = Path(base_dir) / f"{tag}_{ts}_valloss{val_loss:.4f}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+ 
+    # 1. which hyperparams were used
+    with open(run_dir / "config.json", "w") as f:
+        json.dump(vars(args), f, indent=2)
+ 
+    # 2. checkpoint for sampling later
+    torch.save({
+        "model_state_dict": result["model"].state_dict(),
+        "config":           result["cfg_dict"],   # rebuild with GPT(GPTConfig(**config))
+        "args":             vars(args),
+        "val_loss":         val_loss,
+        "step":             result["step"],
+    }, run_dir / "model.pt")
+ 
+    # 3. tokenizer (raw tokenizers.Tokenizer supports .save)
+    try:
+        result["raw_tok"].save(str(run_dir / "tokenizer.json"))
+    except Exception as e:
+        print(f"warning: could not save tokenizer ({e})")
+ 
+    # 4. copy the log in (lowkey just cp it)
+    try:
+        shutil.copy(args.log_file, run_dir / "mainrun.log")
+    except Exception as e:
+        print(f"warning: could not copy log ({e})")
+ 
+    print(f"saved run -> {run_dir}")
+    return run_dir
+
+def main(args: Optional[Hyperparameters] = None) -> dict:
+    if args is None:
+        args = Hyperparameters()
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     
     global logger
     logger = configure_logging(args.log_file)
+
+    wb = None
+    if args.wandb:
+        import wandb as wb
+        wb.init(project=args.wandb_project,
+                name=args.wandb_run_name,
+                config=vars(args))
+
     
     hyperparams_dict = vars(args)
     logger.log("hyperparameters_configured", **hyperparams_dict)
@@ -120,7 +193,8 @@ def main():
     train_titles, val_titles = get_titles(args.num_titles, args.seed, args.val_frac)
     
     eos_token = "<eos>"
-    tok = BPETokenizer(train_tokenizer(train_titles+val_titles, args.vocab_size, eos_token=eos_token))
+    raw_tok = train_tokenizer(train_titles+val_titles, args.vocab_size, eos_token=eos_token)
+    tok = BPETokenizer(raw_tok)
     train_text = eos_token.join(train_titles) + eos_token
     val_text = eos_token.join(val_titles) + eos_token
     train_ids = torch.tensor(tok.encode(train_text), dtype=torch.long)
@@ -136,7 +210,7 @@ def main():
                tokens_per_epoch=len(train_ids),
                vocab_size=tok.vocab_size)
 
-    cfg = GPTConfig(
+    cfg_dict = dict(
         vocab_size = tok.vocab_size,
         block_size = args.block_size,
         n_layer    = args.n_layer,
@@ -144,7 +218,10 @@ def main():
         d_model    = args.d_model,
         dropout    = args.dropout,
     )
+    cfg = GPTConfig(**cfg_dict)
+
     model = GPT(cfg).to(device)
+
     model_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.log("model_info", parameters_count=model_params)
     
@@ -166,36 +243,60 @@ def main():
     ptr = 0
     step = 0
     t0 = time.time()
-    for epoch in range(1, args.epochs + 1):
-        for _ in tqdm(range(1, batches + 1), desc=f"Epoch {epoch}/{args.epochs}"):
-            step += 1
-            xb, yb, ptr = get_batch(train_ids, ptr, args.block_size, args.batch_size, device)
-            _, loss = model(xb, yb)
-            opt.zero_grad(set_to_none=True)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            opt.step()
-            scheduler.step()
+    try:
+        for epoch in range(1, args.epochs + 1):
+            for _ in tqdm(range(1, batches + 1), desc=f"Epoch {epoch}/{args.epochs}"):
+                step += 1
+                xb, yb, ptr = get_batch(train_ids, ptr, args.block_size, args.batch_size, device)
+                _, loss = model(xb, yb)
+                opt.zero_grad(set_to_none=True)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                opt.step()
+                scheduler.step()
 
-            elapsed = time.time() - t0
-            logger.log("training_step",
-                      step=step,
-                      max_steps=max_steps,
-                      loss=loss.item(),
-                      elapsed_time=elapsed,
-                      prnt=False)
+                elapsed = time.time() - t0
+                logger.log("training_step",
+                        step=step,
+                        max_steps=max_steps,
+                        loss=loss.item(),
+                        elapsed_time=elapsed,
+                        prnt=False)
 
-            if step == 1 or step % eval_interval == 0 or step == max_steps:
-                val_loss = evaluate()
-                logger.log("validation_step",
-                          step=step,
-                          max_steps=max_steps,
-                          loss=val_loss,
-                          elapsed_time=elapsed)
+                if wb is not None:
+                    wb.log({"train_loss": loss.item(),
+                            "lr": scheduler.get_last_lr()[0]}, step=step)
+
+                if step == 1 or step % eval_interval == 0 or step == max_steps:
+                    val_loss = evaluate()
+                    logger.log("validation_step",
+                            step=step,
+                            max_steps=max_steps,
+                            loss=val_loss,
+                            elapsed_time=elapsed)
+                    if wb is not None:
+                        wb.log({"val_loss": val_loss}, step=step)
+    finally:
+        if wb is not None:
+            wb.finish()
+        try:
+            logger.file_handler.close()
+        except Exception:
+            pass
+
+    last_val_loss = evaluate() 
+
+    return {
+        "args":     args,
+        "model":    model,
+        "tok":      tok,
+        "raw_tok":  raw_tok,
+        "cfg_dict": cfg_dict,
+        "val_loss": last_val_loss,
+        "step":     step,
+    }
 
 if __name__ == "__main__":
-    try:
-        main()
-    finally:
-        if logger and hasattr(logger, 'file_handler'):
-            logger.file_handler.close()
+    result = main()
+    if result["args"].save_checkpoint:
+        save_run(result, base_dir=result["args"].out_root, tag="train")

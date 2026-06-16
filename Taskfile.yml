@@ -17,6 +17,12 @@ tasks:
     cmds:
       - python3 train.py
 
+  sweep:
+    deps: [download]
+    dir: mainrun
+    cmds:
+      - python3 sweep.py
+
   submit:
     deps: [checkpoint]
     dir: scripts
