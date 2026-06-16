@@ -41,7 +41,7 @@ def evaluate_tokenizer(tokenizer, corpus, low_freq_threshold=5):
         "unused_token_pct":  unused / vocab_size,           # want close to 0
     }
 
-def plot_results(vocab_sizes, results, path="../figures/tokenizer_sweep.png"):
+def plot_results(vocab_sizes, results, path="../results/tokenizer_sweep.png"):
     fertility = [r["fertility"] for r in results]
     rare      = [r["rare_token_pct"] for r in results]
  
@@ -54,20 +54,32 @@ def plot_results(vocab_sizes, results, path="../figures/tokenizer_sweep.png"):
     ax.set_xscale("log", base=2)
     ax.set_xticks(vocab_sizes)
     ax.xaxis.set_major_formatter(ScalarFormatter())  # plain numbers, not 2^n
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
     ax.set_xlabel("vocab size")
     ax.set_ylabel("fraction")
     ax.set_ylim(0, 0.45)
     ax.grid(True, alpha=0.3)
     ax.legend()
     fig.tight_layout()
+ 
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=150)
     print(f"saved plot to {path}")
 
-def tokenization_report(tokenizer, terms):  
+
+def tokenization_report(tokenizer, terms):
+    report = {}
     for term in terms:
-        ids = tokenizer.encode(term).ids
-        toks = [tokenizer.id_to_token(i) for i in ids]
-        print(f"{term:25s} → {toks}")
+        toks = [tokenizer.id_to_token(i) for i in tokenizer.encode(term).ids]
+        report[term] = toks
+        print(f"{term:25s} -> {toks}")
+    return report
+
+def save_results(results, path="../results/tokenizer_sweep.json"):
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"saved results to {path}")
 
 def main():
     args = Hyperparameters()
@@ -87,8 +99,7 @@ def main():
         tok = train_tokenizer(train_titles, vc, eos_token="<eos>")
 
         # analyse metrics
-        stats = evaluate_tokenizer(tok, val_titles)
-        results.append(stats)
+        stats = evaluate_tokenizer(tok, val_titles)s
         print(
             f"vocab={vc:6d} | fertility={stats['fertility']:.3f} | "
             f"mean_len={stats['mean_seq_len']:.1f} | "
@@ -98,8 +109,10 @@ def main():
         )
 
         # qualitative analysis
-        tokenization_report(tok, TERMS)
+        stats['tokenization'] = tokenization_report(tok, TERMS)
+        results.append(stats)
 
+    save_results(results)
     plot_results(VOCAB_SIZES, results)
 
 
