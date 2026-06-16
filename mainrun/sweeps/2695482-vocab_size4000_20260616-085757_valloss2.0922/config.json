@@ -1,0 +1,23 @@
+{
+  "attn_type": "MHA",
+  "block_size": 128,
+  "batch_size": 64,
+  "vocab_size": 4000,
+  "n_layer": 6,
+  "n_head": 8,
+  "d_model": 512,
+  "dropout": 0.1,
+  "lr": 0.006,
+  "weight_decay": 0.0,
+  "evals_per_epoch": 3,
+  "epochs": 7,
+  "seed": 1337,
+  "num_titles": 100000,
+  "val_frac": 0.1,
+  "log_file": "./logs/mainrun.log",
+  "wandb": false,
+  "wandb_project": "mainrun",
+  "wandb_run_name": null,
+  "save_checkpoint": false,
+  "out_root": "runs"
+}
