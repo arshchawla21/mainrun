@@ -6,7 +6,14 @@ changelog:
   import key functions from train (16/06)
 """
 from collections import Counter
-from train import get_titles, Hyperparameters, train_tokenizer
+
+from train import get_titles, Hyperparameters
+from model.tokenizer import train_tokenizer
+
+from pathlib import Path
+
+import json
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import ScalarFormatter
@@ -57,7 +64,7 @@ def plot_results(vocab_sizes, results, path="../results/tokenizer_sweep.png"):
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
     ax.set_xlabel("vocab size")
     ax.set_ylabel("fraction")
-    ax.set_ylim(0, 0.45)
+    ax.set_ylim(0, 0.75)
     ax.grid(True, alpha=0.3)
     ax.legend()
     fig.tight_layout()
@@ -99,7 +106,7 @@ def main():
         tok = train_tokenizer(train_titles, vc, eos_token="<eos>")
 
         # analyse metrics
-        stats = evaluate_tokenizer(tok, val_titles)s
+        stats = evaluate_tokenizer(tok, val_titles)
         print(
             f"vocab={vc:6d} | fertility={stats['fertility']:.3f} | "
             f"mean_len={stats['mean_seq_len']:.1f} | "
