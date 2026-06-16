@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 
 import torch
+import torch.nn as nn
+from torch.nn import functional as F
 
 from datasets import load_dataset
 from tqdm import tqdm
