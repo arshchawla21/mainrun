@@ -48,7 +48,7 @@ def evaluate_tokenizer(tokenizer, corpus, low_freq_threshold=5):
         "unused_token_pct":  unused / vocab_size,           # want close to 0
     }
 
-def plot_results(vocab_sizes, results, path="../results/tokenizer_sweep.png"):
+def plot_results(vocab_sizes, results, path="../results/vocab_analysis.png"):
     fertility = [r["fertility"] for r in results]
     rare      = [r["rare_token_pct"] for r in results]
  
@@ -82,7 +82,7 @@ def tokenization_report(tokenizer, terms):
         print(f"{term:25s} -> {toks}")
     return report
 
-def save_results(results, path="../results/tokenizer_sweep.json"):
+def save_results(results, path="../results/vocab_qualitative_analysis.json"):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump(results, f, indent=2)

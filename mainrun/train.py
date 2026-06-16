@@ -20,7 +20,7 @@ from model.gpt import GPTConfig, CausalSelfAttention, GPT
 
 @dataclass
 class Hyperparameters:
-    attn_type: str = 'MHA' 
+    attn_type: str = 'MHA'
     block_size: int = 128
     batch_size: int = 64
     vocab_size: int = 16_000
@@ -31,7 +31,7 @@ class Hyperparameters:
     lr: float = 6e-3
     weight_decay: float = 0.0
     evals_per_epoch: int = 3
-    
+
     epochs: int = 7
     seed: int = 1337
     num_titles: int = 100_000
@@ -49,9 +49,9 @@ class Hyperparameters:
 
 def configure_logging(log_file: str):
     Path(log_file).parent.mkdir(parents=True, exist_ok=True)
-    
+
     file_handler = open(log_file, 'w')
-    
+
     structlog.configure(
         processors=[
             structlog.stdlib.filter_by_level,
@@ -68,17 +68,17 @@ def configure_logging(log_file: str):
         logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
-    
+
     class DualLogger:
         def __init__(self, file_handler):
             self.file_handler = file_handler
             self.logger = structlog.get_logger()
-            
+
         def log(self, event, **kwargs):
             log_entry = json.dumps({"event": event, "timestamp": time.time(), **kwargs})
             self.file_handler.write(log_entry + "\n")
             self.file_handler.flush()
-            
+
             if kwargs.get("prnt", True):
                 if "step" in kwargs and "max_steps" in kwargs:
                     tqdm.write(f"[{kwargs.get('step'):>5}/{kwargs.get('max_steps')}] {event}: loss={kwargs.get('loss', 'N/A'):.6f} time={kwargs.get('elapsed_time', 0):.2f}s")
@@ -88,7 +88,7 @@ def configure_logging(log_file: str):
                         tqdm.write(f"{event}: {', '.join(parts)}")
                     else:
                         tqdm.write(event)
-    
+
     return DualLogger(file_handler)
 
 logger = None
@@ -125,6 +125,25 @@ def iter_full_split(split_ids: torch.Tensor, block_size: int, batch_size: int, d
         y = batch[1:].view(batch_size, block_size).to(device)
         yield x, y
 
+def eval_train_val(model, train_ids, train_text, val_ids, val_text,
+                   block_size, batch_size, device):
+    """
+    Standalone twin of evaluate(): summed token NLL / characters of `text` (nats per char).
+    Returns (train_loss, val_loss) so both numbers come from one identical code path.
+    Does NOT touch evaluate() or mainrun.log -- used only to populate loss.log for plotting.
+    """
+    def _split(ids, text):
+        model.eval()
+        total = 0.0
+        with torch.no_grad():
+            for xb, yb in iter_full_split(ids, block_size, batch_size, device):
+                logits, _ = model(xb, yb)
+                B, T, V = logits.size()
+                total += F.cross_entropy(logits.view(-1, V), yb.view(-1), reduction='sum').item()
+        model.train()
+        return total / len(text)
+    return _split(train_ids, train_text), _split(val_ids, val_text)
+
 def save_run(result: dict, base_dir: str = "../sweeps", tag: str = "run") -> Path:
     """
     Persist one finished run into  base_dir/{tag}_{time}_valloss{X}/  containing:
@@ -132,17 +151,18 @@ def save_run(result: dict, base_dir: str = "../sweeps", tag: str = "run") -> Pat
       - model.pt       : weights + GPTConfig + final val loss (everything needed to sample)
       - tokenizer.json : the trained tokenizer (so samples decode correctly)
       - mainrun.log    : a copy of the training log
+      - loss.log       : a copy of the train/val per-char loss log (for plotting)
     """
     args     = result["args"]
     val_loss = result["val_loss"]
     ts       = time.strftime("%Y%m%d-%H%M%S")
     run_dir  = Path(base_dir) / f"{tag}_{ts}_valloss{val_loss:.4f}"
     run_dir.mkdir(parents=True, exist_ok=True)
- 
+
     # 1. which hyperparams were used
     with open(run_dir / "config.json", "w") as f:
         json.dump(vars(args), f, indent=2)
- 
+
     # 2. checkpoint for sampling later
     torch.save({
         "model_state_dict": result["model"].state_dict(),
@@ -151,19 +171,25 @@ def save_run(result: dict, base_dir: str = "../sweeps", tag: str = "run") -> Pat
         "val_loss":         val_loss,
         "step":             result["step"],
     }, run_dir / "model.pt")
- 
+
     # 3. tokenizer (raw tokenizers.Tokenizer supports .save)
     try:
         result["raw_tok"].save(str(run_dir / "tokenizer.json"))
     except Exception as e:
         print(f"warning: could not save tokenizer ({e})")
- 
-    # 4. copy the log in (lowkey just cp it)
+
+    # 4. copy the logs in (lowkey just cp them)
     try:
         shutil.copy(args.log_file, run_dir / "mainrun.log")
     except Exception as e:
         print(f"warning: could not copy log ({e})")
- 
+    try:
+        loss_log = Path(args.log_file).with_name("loss.log")
+        if loss_log.exists():
+            shutil.copy(loss_log, run_dir / "loss.log")
+    except Exception as e:
+        print(f"warning: could not copy loss.log ({e})")
+
     print(f"saved run -> {run_dir}")
     return run_dir
 
@@ -172,9 +198,14 @@ def main(args: Optional[Hyperparameters] = None) -> dict:
         args = Hyperparameters()
     torch.manual_seed(args.seed)
     random.seed(args.seed)
-    
+
     global logger
     logger = configure_logging(args.log_file)
+
+    # separate loss log, lives next to mainrun.log (e.g. ./logs/loss.log)
+    loss_log_path = Path(args.log_file).with_name("loss.log")
+    loss_log_path.parent.mkdir(parents=True, exist_ok=True)
+    loss_fh = open(loss_log_path, "w")
 
     wb = None
     if args.wandb:
@@ -183,15 +214,14 @@ def main(args: Optional[Hyperparameters] = None) -> dict:
                 name=args.wandb_run_name,
                 config=vars(args))
 
-    
     hyperparams_dict = vars(args)
     logger.log("hyperparameters_configured", **hyperparams_dict)
-    
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.log("device_info", device=device)
 
     train_titles, val_titles = get_titles(args.num_titles, args.seed, args.val_frac)
-    
+
     eos_token = "<eos>"
     raw_tok = train_tokenizer(train_titles+val_titles, args.vocab_size, eos_token=eos_token)
     tok = BPETokenizer(raw_tok)
@@ -199,7 +229,13 @@ def main(args: Optional[Hyperparameters] = None) -> dict:
     val_text = eos_token.join(val_titles) + eos_token
     train_ids = torch.tensor(tok.encode(train_text), dtype=torch.long)
     val_ids = torch.tensor(tok.encode(val_text), dtype=torch.long)
-    
+
+    # fixed slice of train, scored the same way as val (same size -> same cost & comparable).
+    # swap for (train_ids, train_text) if you want train loss over the whole train set.
+    train_eval_titles = train_titles[:len(val_titles)]
+    train_eval_text = eos_token.join(train_eval_titles) + eos_token
+    train_eval_ids = torch.tensor(tok.encode(train_eval_text), dtype=torch.long)
+
     batches = len(train_ids) // (args.block_size * args.batch_size)
     max_steps = args.epochs * batches
     eval_interval = batches // args.evals_per_epoch
@@ -224,7 +260,7 @@ def main(args: Optional[Hyperparameters] = None) -> dict:
 
     model_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.log("model_info", parameters_count=model_params)
-    
+
     opt = torch.optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max_steps)
 
@@ -276,6 +312,19 @@ def main(args: Optional[Hyperparameters] = None) -> dict:
                             elapsed_time=elapsed)
                     if wb is not None:
                         wb.log({"val_loss": val_loss}, step=step)
+
+                    # --- separate train/val measurement -> loss.log (for plotting) ---
+                    tr, vl = eval_train_val(model,
+                                            train_eval_ids, train_eval_text,
+                                            val_ids, val_text,
+                                            args.block_size, args.batch_size, device)
+                    loss_fh.write(json.dumps({
+                        "step":  step,
+                        "epoch": round(step / batches, 4),
+                        "train": tr,
+                        "val":   vl,
+                    }) + "\n")
+                    loss_fh.flush()
     finally:
         if wb is not None:
             wb.finish()
@@ -283,8 +332,12 @@ def main(args: Optional[Hyperparameters] = None) -> dict:
             logger.file_handler.close()
         except Exception:
             pass
+        try:
+            loss_fh.close()
+        except Exception:
+            pass
 
-    last_val_loss = evaluate() 
+    last_val_loss = evaluate()
 
     return {
         "args":     args,
