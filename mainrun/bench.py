@@ -10,7 +10,8 @@ A Sweep declares:
   plots    : which plot views to render (see plots.py registry)
 
 CLI:
-  python3 bench.py run  <experiment>            # train the sweep, save + plot
+  python3 bench.py run  <experiment>            # train the sweep (resumes: skips cells already in results.json)
+  python3 bench.py run  <experiment> --force    # retrain every cell, ignoring cached results
   python3 bench.py plot <experiment> [dir]      # re-plot an existing campaign (no training)
   python3 bench.py list                          # show available experiments
 
@@ -33,7 +34,7 @@ from typing import Callable, Optional
 import torch
 
 from train import (Hyperparameters, main, save_run, _git_short_hash,
-                   get_titles, train_tokenizer, BPETokenizer)
+                   get_titles, train_tokenizer, Tokenizer)
 
 SWEEPS_DIR = Path(__file__).resolve().parent.parent / "sweeps"
 _FIELDS = {f.name for f in dataclasses.fields(Hyperparameters)}
@@ -93,16 +94,20 @@ def train_flops(vocab, d_model, n_layer, block_size, tokens):
 
 _titles_cache = {}
 _tokens_cache = {}
-def measure_train_tokens(vocab, base):
-    """Exact train-token count for a vocab (tokenises the same way main() does). Cached."""
+def measure_train_tokens(vocab, base, token_type=None, transition_ratio=None):
+    """Exact train-token count for a (vocab, token_type) (tokenises like main()). Cached."""
+    token_type = token_type or base.token_type
+    transition_ratio = base.transition_ratio if transition_ratio is None else transition_ratio
     tkey = (base.num_titles, base.seed, base.val_frac)
     if tkey not in _titles_cache:
         _titles_cache[tkey] = get_titles(base.num_titles, base.seed, base.val_frac)
-    ckey = (vocab, *tkey)
+    # transition_ratio only affects superbpe, but include it in the key so token counts stay correct.
+    ckey = (vocab, token_type, transition_ratio, *tkey)
     if ckey not in _tokens_cache:
         train_titles, val_titles = _titles_cache[tkey]
         eos = "<eos>"
-        tok = BPETokenizer(train_tokenizer(train_titles + val_titles, vocab, eos_token=eos))
+        tok = Tokenizer(train_tokenizer(token_type, train_titles + val_titles, vocab, eos_token=eos,
+                                        transition_ratio=transition_ratio))
         _tokens_cache[ckey] = len(tok.encode(eos.join(train_titles) + eos))
     return _tokens_cache[ckey]
 
@@ -145,7 +150,7 @@ def _metrics(base, point, ov):
     """Derived columns every row carries: FLOPs, embedding fraction, head_dim."""
     p = {**vars(base), **point, **ov}
     v, d, nl, bs = p["vocab_size"], p["d_model"], p["n_layer"], p["block_size"]
-    toks = p["epochs"] * measure_train_tokens(v, base)
+    toks = p["epochs"] * measure_train_tokens(v, base, p["token_type"], p["transition_ratio"])
     _, emb, tot = est_params(v, d, nl)
     return {"flops": train_flops(v, d, nl, bs, toks),
             "emb_frac": round(emb / tot, 3),
@@ -197,15 +202,41 @@ def campaign_dir(sweep):
     return SWEEPS_DIR / f"{time.strftime('%Y%m%d')}_{sweep.name}"
 
 
-def run(sweep):
+def _point_key(sweep, d):
+    """Identity of a sweep point = its axis values. Works on both a `point` dict and a saved
+    row (rows carry the axis keys), so reruns can detect already-computed cells."""
+    return tuple((k, d[k]) for k in sweep.axes)
+
+
+def load_results(out):
+    """Existing rows for a campaign (for resume/merge), or [] if none/unreadable."""
+    p = out / "results.json"
+    if p.exists():
+        try:
+            return json.loads(p.read_text()).get("rows", [])
+        except (json.JSONDecodeError, OSError):
+            return []
+    return []
+
+
+def run(sweep, force=False):
     base = Hyperparameters()
     out = campaign_dir(sweep)
     out.mkdir(parents=True, exist_ok=True)
     plan = list(_points(sweep.axes))
     print_plan(sweep, base, plan)
 
-    rows = []
+    # resume: keep prior rows and skip points already computed (unless --force retrains all).
+    rows = [] if force else load_results(out)
+    done = {_point_key(sweep, r) for r in rows}
+    if done:
+        print(f"\nresuming: {len(done)} cell(s) already done -> skipping them "
+              f"({len(plan) - len(done)} to run){' [--force overrides]' if force else ''}")
+
     for point in plan:
+        if _point_key(sweep, point) in done:
+            print(f"  ~~ skip (cached): {_label(point)}")
+            continue
         ov = _overrides(sweep, base, point)
         args = replace(base, **ov)
         print(f"\n=== {_label(point)}  (d_model={ov['d_model']}, n_head={ov['n_head']}, "
@@ -221,6 +252,7 @@ def run(sweep):
         rows.append({**point, **ov, **_metrics(base, point, ov),
                      "N": N, "val": result["val_loss"], "run_dir": str(run_dir)})
         print(f"  -> N={N/1e6:.1f}M  val={result['val_loss']:.4f}")
+        save_results(sweep, rows, out)   # checkpoint after each cell -> a crash keeps progress
         del result
         _cuda_cleanup()
 
@@ -276,11 +308,11 @@ if __name__ == "__main__":
             sys.exit(f"unknown experiment '{name}'. options: {', '.join(EXPERIMENTS)}")
         sweep = EXPERIMENTS[name]
         if cmd == "run":
-            run(sweep)
+            run(sweep, force="--force" in sys.argv[3:])
         else:
             target = Path(sys.argv[3]) if len(sys.argv) > 3 else latest_campaign(sweep)
             if target is None:
                 sys.exit(f"no campaign found for '{name}' under {SWEEPS_DIR}")
             visualise(target)            # re-run that campaign's visualise.py (no training)
     else:
-        sys.exit("usage: bench.py [list | run <exp> | plot <exp> [dir]]")
+        sys.exit("usage: bench.py [list | run <exp> [--force] | plot <exp> [dir]]")
