@@ -15,12 +15,13 @@ import structlog
 import shutil
 import subprocess
 
-from model.tokenizer import train_tokenizer, BPETokenizer
+from model.tokenizer import train_tokenizer, Tokenizer
 from model.gpt import GPTConfig, CausalSelfAttention, GPT
 
 @dataclass
 class Hyperparameters:
     attn_type: str = 'MHA'
+    token_type: str = 'bpe'   # 'bpe' | 'unigram' | 'wordpiece'
     block_size: int = 128
     batch_size: int = 64
     vocab_size: int = 16_000
@@ -29,7 +30,7 @@ class Hyperparameters:
     d_model: int = 512
     dropout: float = 0.1
     lr: float = 6e-3
-    weight_decay: float = 0.0
+    weight_decay: float = 0.01
     evals_per_epoch: int = 3
 
     epochs: int = 7
@@ -223,8 +224,8 @@ def main(args: Optional[Hyperparameters] = None) -> dict:
     train_titles, val_titles = get_titles(args.num_titles, args.seed, args.val_frac)
 
     eos_token = "<eos>"
-    raw_tok = train_tokenizer(train_titles+val_titles, args.vocab_size, eos_token=eos_token)
-    tok = BPETokenizer(raw_tok)
+    raw_tok = train_tokenizer(args.token_type, train_titles+val_titles, args.vocab_size, eos_token=eos_token)
+    tok = Tokenizer(raw_tok)
     train_text = eos_token.join(train_titles) + eos_token
     val_text = eos_token.join(val_titles) + eos_token
     train_ids = torch.tensor(tok.encode(train_text), dtype=torch.long)
