@@ -21,7 +21,10 @@ from model.gpt import GPTConfig, CausalSelfAttention, GPT
 @dataclass
 class Hyperparameters:
     attn_type: str = 'MHA'
-    token_type: str = 'bpe'   # 'bpe' | 'unigram' | 'wordpiece'
+    token_type: str = 'bpe'   # 'bpe' | 'unigram' | 'wordpiece' | 'superbpe'
+    transition_ratio: float = 0.75  # superbpe only: fraction of vocab spent on stage-1 subwords
+    optim_type: str = 'cosine' # LR schedule (CosineAnnealingLR)
+    optim_alg: str = 'adamw'   # gradient-descent algorithm: 'sgd' | 'adamw'
     block_size: int = 128
     batch_size: int = 64
     vocab_size: int = 16_000
@@ -224,7 +227,8 @@ def main(args: Optional[Hyperparameters] = None) -> dict:
     train_titles, val_titles = get_titles(args.num_titles, args.seed, args.val_frac)
 
     eos_token = "<eos>"
-    raw_tok = train_tokenizer(args.token_type, train_titles+val_titles, args.vocab_size, eos_token=eos_token)
+    raw_tok = train_tokenizer(args.token_type, train_titles+val_titles, args.vocab_size,
+                              eos_token=eos_token, transition_ratio=args.transition_ratio)
     tok = Tokenizer(raw_tok)
     train_text = eos_token.join(train_titles) + eos_token
     val_text = eos_token.join(val_titles) + eos_token
@@ -262,7 +266,12 @@ def main(args: Optional[Hyperparameters] = None) -> dict:
     model_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.log("model_info", parameters_count=model_params)
 
-    opt = torch.optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    if args.optim_alg == 'sgd':
+        opt = torch.optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    elif args.optim_alg == 'adamw':
+        opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    else:
+        raise ValueError(f"unknown optim_alg {args.optim_alg!r} (expected: sgd | adamw)")
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max_steps)
 
     def evaluate():
