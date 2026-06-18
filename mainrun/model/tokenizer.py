@@ -52,34 +52,6 @@ def _train_superbpe(titles: list[str], vocab_size: int, specials: list[str],
     s2.pre_tokenizer = pre_tokenizers.ByteLevel(use_regex=False)
     return s2
 
-
-def _build_wordlevel(titles: list[str], pad_token: str = "<pad>",
-                     eos_token: str = "<eos>") -> HFTokenizer:
-    """Word-level tokenizer: no training, no vocab cap, no <unk>. Splitting rule: whitespace
-    delimits, word-connecting punctuation ':' '/' '-' stays attached, and every other punctuation
-    char becomes its own token. So 'HN:', 'open-source', 'York/Remote' stay whole, while
-    'tool,' -> 'tool' ',' and 'really?' -> 'really' '?'. The vocab is built by running this exact
-    pre-tokenizer over the FULL (train+val) corpus, so it covers everything that will ever be
-    encoded -> zero OOV, hence no <unk> needed. No ByteLevel decoder -> WordLevel decode space-joins.
-    To keep more connectors (e.g. '_' '+' '.'), add them inside the regex character class."""
-    # 1) WhitespaceSplit drops whitespace; 2) isolate any char that isn't a letter/digit/connector
-    #    (connectors kept: ':' '/' '-'  -- '-' is last in the class so it's a literal, not a range).
-    pre = pre_tokenizers.Sequence([
-        pre_tokenizers.WhitespaceSplit(),
-        pre_tokenizers.Split(pattern=Regex(r"[^\p{L}\p{N}:/-]"), behavior="isolated"),
-    ])
-    specials = [pad_token, eos_token]                  # keep eos at id 1 (matches the other tokenizers)
-    vocab = {tok: i for i, tok in enumerate(specials)}
-    for t in titles:
-        for w, _ in pre.pre_tokenize_str(t):           # build vocab with the SAME rule used at encode
-            if w not in vocab:
-                vocab[w] = len(vocab)
-    tk = HFTokenizer(models.WordLevel(vocab=vocab))    # no unk_token -> truly no <unk>
-    tk.pre_tokenizer = pre
-    tk.add_special_tokens(specials)                    # so a glued '<eos>' (title<eos>title) is extracted
-    return tk
-
-
 def train_tokenizer(token_type: str, titles: list[str], vocab_size: int,
                     unk_token: str = "<unk>", pad_token: str = "<pad>",
                     eos_token: str = "<eos>", transition_ratio: float = 0.75) -> HFTokenizer:
@@ -92,10 +64,6 @@ def train_tokenizer(token_type: str, titles: list[str], vocab_size: int,
     # the rust `tokenizers` module is patched with the superbpe fork to enable two-stage training.
     if token_type == "superbpe":
         return _train_superbpe(titles, vocab_size, specials, transition_ratio)
-
-    # direct word-level: no training, no <unk>, no vocab_size = len(set([t.split() for t in titles]))
-    if token_type == "wordlevel":
-        return _build_wordlevel(titles, pad_token, eos_token)
 
     if token_type == "bpe":
         tk = HFTokenizer(models.BPE(unk_token=unk_token))
