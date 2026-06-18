@@ -50,6 +50,19 @@ class CausalSelfAttention(nn.Module):
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         return self.resid_drop(self.proj(y))
 
+# SwiGlu https://arxiv.org/abs/2002.05202
+class SwiGLU(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        hidden = int(8/3 * cfg.d_model)          # 8/3 keeps param count == 4*d GELU MLP
+        hidden = 64 * ((hidden + 63) // 64)      # round to multiple of 64
+        self.w1 = nn.Linear(cfg.d_model, hidden, bias=cfg.bias)   # gate
+        self.w3 = nn.Linear(cfg.d_model, hidden, bias=cfg.bias)   # up
+        self.w2 = nn.Linear(hidden, cfg.d_model, bias=cfg.bias)   # down
+        self.drop = nn.Dropout(cfg.dropout)
+    def forward(self, x):
+        return self.drop(self.w2(F.silu(self.w1(x)) * self.w3(x)))
+
 class MLP(nn.Module):
     def __init__(self, cfg: GPTConfig):
         super().__init__()
@@ -80,8 +93,15 @@ class Block(nn.Module):
         elif cfg.norm_type == 'rmsnorm':
             self.ln1 = RMSNorm(cfg.d_model)
             self.ln2 = RMSNorm(cfg.d_model)
+        else:
+            raise ValueError(f"Unknown norm_type: {cfg.norm_type}")
         self.attn = CausalSelfAttention(cfg)
-        self.mlp  = MLP(cfg)
+        if cfg.mlp_type == 'gelu':
+            self.mlp  = MLP(cfg)
+        elif cfg.mlp_type == 'swiglu':
+            self.mlp  = SwiGLU(cfg)
+        else:
+            raise ValueError(f"Unknown mlp_type: {cfg.mlp_type}")
     def forward(self, x):
         x = x + self.attn(self.ln1(x))
         x = x + self.mlp(self.ln2(x))
@@ -95,7 +115,12 @@ class GPT(nn.Module):
         self.pos_emb   = nn.Parameter(torch.zeros(1, cfg.block_size, cfg.d_model))
         self.drop      = nn.Dropout(cfg.dropout)
         self.blocks    = nn.ModuleList([Block(cfg) for _ in range(cfg.n_layer)])
-        self.ln_f      = nn.LayerNorm(cfg.d_model)
+        if cfg.norm_type == 'layernorm':
+            self.ln_f = nn.LayerNorm(cfg.d_model)
+        elif cfg.norm_type == 'rmsnorm':
+            self.ln_f = RMSNorm(cfg.d_model)
+        else:
+            raise ValueError(f"Unknown norm_type: {cfg.norm_type}")
         self.head      = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
 
         self.apply(self._init_weights)

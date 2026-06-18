@@ -30,6 +30,7 @@ class Hyperparameters:
     decay_frac: float = 0.2    # wsd only: fraction of steps spent in the final decay (inert for cosine)
     decay_type: str = 'cosine' # wsd only: decay shape -- 'linear' | 'cosine' | 'sqrt' (1-sqrt)
     norm_type: str = 'layernorm' # 'layernorm' | 'rmsnorm'
+    mlp_type: str = 'gelu' # 'gelu' | 'swiglu' 
     block_size: int = 128
     batch_size: int = 64
     vocab_size: int = 16_000
