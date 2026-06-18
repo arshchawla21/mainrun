@@ -30,7 +30,10 @@ class Hyperparameters:
     decay_frac: float = 0.2    # wsd only: fraction of steps spent in the final decay (inert for cosine)
     decay_type: str = 'cosine' # wsd only: decay shape -- 'linear' | 'cosine' | 'sqrt' (1-sqrt)
     norm_type: str = 'layernorm' # 'layernorm' | 'rmsnorm'
-    mlp_type: str = 'gelu' # 'gelu' | 'swiglu' 
+    mlp_type: str = 'gelu' # 'gelu' | 'swiglu'
+    pos_type : str = 'learned' # 'learned' | 'rope'
+    qk_norm: bool = False
+    bias: str = 'default'   # 'default' = original (Linear + LayerNorm biases) | 'off' = no bias anywhere
     block_size: int = 128
     batch_size: int = 64
     vocab_size: int = 16_000
@@ -265,6 +268,11 @@ def main(args: Optional[Hyperparameters] = None) -> dict:
         n_head     = args.n_head,
         d_model    = args.d_model,
         dropout    = args.dropout,
+        norm_type  = args.norm_type,
+        mlp_type   = args.mlp_type,
+        pos_type   = args.pos_type,
+        qk_norm    = args.qk_norm,
+        bias       = args.bias,
     )
     cfg = GPTConfig(**cfg_dict)
 
