@@ -24,7 +24,6 @@ Design notes:
 """
 import gc
 import json
-import time
 import itertools
 import dataclasses
 from dataclasses import dataclass, field, replace
@@ -82,6 +81,19 @@ def solve_width(budget, head_dim=64):
     return resolve
 
 
+def heads_for(head_dim=64):
+    """Resolver for free architecture sweeps: d_model + n_layer come straight from the axes
+    (params are NOT pinned to a budget -> N is an output, plotted on x), this only derives
+    n_head so d_model/n_head ~= head_dim. Pick d_model divisible by head_dim (e.g. multiples of 64)."""
+    def resolve(p):
+        d = p["d_model"]
+        nh = max(1, round(d / head_dim))
+        while d % nh:                      # guarantee d_model % n_head == 0 (GPT asserts this)
+            nh -= 1
+        return {"n_head": nh}
+    return resolve
+
+
 # ============================ FLOP / token accounting ============================
 def train_flops(vocab, d_model, n_layer, block_size, tokens):
     """Approx fwd+bwd training FLOPs; constants are consistent across configs so relative
@@ -131,7 +143,8 @@ def _points(axes):
 
 def _overrides(sweep, base, point):
     """Concrete Hyperparameters overrides for one point: held fields + real-field axis
-    values + resolver output + an auto batch_size (so tokens/step stays constant)."""
+    values + resolver output + an auto batch_size (so tokens/step stays constant, unless a
+    sweep sets batch_size explicitly -- e.g. the batch sweep, which varies tokens/step on purpose)."""
     merged = {**vars(base), **sweep.hold, **point}
     ov = {k: v for k, v in sweep.hold.items() if k in _FIELDS}
     ov.update({k: v for k, v in point.items() if k in _FIELDS})
@@ -141,8 +154,9 @@ def _overrides(sweep, base, point):
     # so downstream code (plan table, tagging, rows) can always read d_model/n_head.
     ov.setdefault("d_model", merged["d_model"])
     ov.setdefault("n_head", merged["n_head"])
+    # auto batch_size to pin tokens/step -- but only if the sweep didn't set batch_size itself.
     bs = ov.get("block_size", merged["block_size"])
-    ov["batch_size"] = max(1, sweep.tokens_per_step // bs)
+    ov.setdefault("batch_size", max(1, sweep.tokens_per_step // bs))
     return ov
 
 
@@ -199,7 +213,9 @@ def _cuda_cleanup():
 
 
 def campaign_dir(sweep):
-    return SWEEPS_DIR / f"{time.strftime('%Y%m%d')}_{sweep.name}"
+    # one stable folder per experiment (no date) -> a campaign never repeats; resume always finds
+    # it across days. The creation/run date is recorded in mainrun.log, not the folder name.
+    return SWEEPS_DIR / sweep.name
 
 
 def _point_key(sweep, d):
@@ -286,10 +302,9 @@ def visualise(out):
 
 
 def latest_campaign(sweep):
-    pref = f"_{sweep.name}"
-    dirs = [d for d in SWEEPS_DIR.iterdir() if d.is_dir() and d.name.endswith(pref)] \
-        if SWEEPS_DIR.exists() else []
-    return max(dirs, key=lambda d: d.stat().st_mtime) if dirs else None
+    # campaigns are now date-free single folders, so there's exactly one per experiment.
+    out = campaign_dir(sweep)
+    return out if out.is_dir() else None
 
 
 # ============================ CLI ============================
