@@ -61,11 +61,25 @@ class MLP(nn.Module):
         )
     def forward(self, x): return self.net(x)
 
+# RMSNorm for efficiency https://arxiv.org/abs/1910.07467
+class RMSNorm(nn.Module):
+    def __init__(self, dim, eps=1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
+    def forward(self, x):
+        x = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+        return x * self.weight
+
 class Block(nn.Module):
     def __init__(self, cfg: GPTConfig):
         super().__init__()
-        self.ln1 = nn.LayerNorm(cfg.d_model)
-        self.ln2 = nn.LayerNorm(cfg.d_model)
+        if cfg.norm_type == 'layernorm':
+            self.ln1 = nn.LayerNorm(cfg.d_model)
+            self.ln2 = nn.LayerNorm(cfg.d_model)
+        elif cfg.norm_type == 'rmsnorm':
+            self.ln1 = RMSNorm(cfg.d_model)
+            self.ln2 = RMSNorm(cfg.d_model)
         self.attn = CausalSelfAttention(cfg)
         self.mlp  = MLP(cfg)
     def forward(self, x):
