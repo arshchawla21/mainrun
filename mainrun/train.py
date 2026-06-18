@@ -17,14 +17,18 @@ import subprocess
 
 from model.tokenizer import train_tokenizer, Tokenizer
 from model.gpt import GPTConfig, CausalSelfAttention, GPT
+from model.optimizer import build_optimizer
 
 @dataclass
 class Hyperparameters:
     attn_type: str = 'MHA'
-    token_type: str = 'bpe'   # 'bpe' | 'unigram' | 'wordpiece' | 'superbpe'
+    token_type: str = 'bpe'   # 'bpe' | 'unigram' | 'wordpiece' | 'superbpe' | 'wordlevel'
     transition_ratio: float = 0.75  # superbpe only: fraction of vocab spent on stage-1 subwords
-    optim_type: str = 'cosine' # LR schedule (CosineAnnealingLR)
-    optim_alg: str = 'adamw'   # gradient-descent algorithm: 'sgd' | 'adamw'
+    optim_type: str = 'cosine' # LR schedule: 'cosine' (CosineAnnealingLR) | 'wsd' (warmup-stable-decay)
+    optim_alg: str = 'adamw'   # gradient-descent algorithm: 'sgd' | 'adamw' | 'muonhybrid'
+    warmup_frac: float = 0.05  # wsd only: fraction of steps spent in linear warmup (inert for cosine)
+    decay_frac: float = 0.2    # wsd only: fraction of steps spent in the final decay (inert for cosine)
+    decay_type: str = 'cosine' # wsd only: decay shape -- 'linear' | 'cosine' | 'sqrt' (1-sqrt)
     block_size: int = 128
     batch_size: int = 64
     vocab_size: int = 16_000
@@ -33,6 +37,7 @@ class Hyperparameters:
     d_model: int = 512
     dropout: float = 0.1
     lr: float = 6e-3
+    lr_hybird: float = 3e-4
     weight_decay: float = 0.01
     evals_per_epoch: int = 3
 
@@ -159,8 +164,8 @@ def save_run(result: dict, base_dir: str = "../sweeps", tag: str = "run") -> Pat
     """
     args     = result["args"]
     val_loss = result["val_loss"]
-    ts       = time.strftime("%Y%m%d-%H%M%S")
-    run_dir  = Path(base_dir) / f"{tag}_{ts}_valloss{val_loss:.4f}"
+
+    run_dir  = Path(base_dir) / f"{tag}_valloss{val_loss:.4f}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. which hyperparams were used
@@ -266,13 +271,7 @@ def main(args: Optional[Hyperparameters] = None) -> dict:
     model_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.log("model_info", parameters_count=model_params)
 
-    if args.optim_alg == 'sgd':
-        opt = torch.optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    elif args.optim_alg == 'adamw':
-        opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    else:
-        raise ValueError(f"unknown optim_alg {args.optim_alg!r} (expected: sgd | adamw)")
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max_steps)
+    opt, scheduler = build_optimizer(args, model, max_steps)
 
     def evaluate():
         model.eval()
