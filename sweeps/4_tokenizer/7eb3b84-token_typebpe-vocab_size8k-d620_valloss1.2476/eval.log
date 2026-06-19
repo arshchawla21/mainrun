@@ -1,0 +1,7 @@
+{
+  "run_dir": "../sweeps/4_tokenizer/7eb3b84-token_typebpe-vocab_size8k-d620_valloss1.2476/",
+  "n_gen": 1000,
+  "critic_nats_per_char": 1.395,
+  "critic_pseudo_ppl": 4.0351,
+  "model_val_loss": 1.2476097484536885
+}

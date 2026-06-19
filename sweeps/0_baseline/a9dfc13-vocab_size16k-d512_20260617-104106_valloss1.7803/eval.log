@@ -1,0 +1,7 @@
+{
+  "run_dir": "../sweeps/0_baseline/a9dfc13-vocab_size16k-d512_20260617-104106_valloss1.7803/",
+  "n_gen": 878,
+  "critic_nats_per_char": 3.9824,
+  "critic_pseudo_ppl": 53.6456,
+  "model_val_loss": 1.7802879568743601
+}

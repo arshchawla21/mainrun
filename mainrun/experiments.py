@@ -246,11 +246,10 @@ EXPERIMENTS = {
         tokens_per_step=4096,
     ),
 
-    # --- regularisation sweep: at the winning config, tune weight_decay x dropout.
+    # --- regularisation sweep: at the winning config, tune dropout.
     "reg": Sweep(
         name="9_reg",
-        axes={"weight_decay": [0.0, 0.01, 0.1],
-              "dropout": [0.0, 0.1, 0.2]},
+        axes={"dropout": [0.0, 0.1, 0.2]},
         hold={
             "vocab_size": 16_000,
             "token_type": "unigram",
@@ -268,7 +267,7 @@ EXPERIMENTS = {
             "title_masking": True,
             "block_size": 256
         },
-        x="weight_decay", group="dropout",
+        x="dropout",
         tokens_per_step=4096,
     ),
 }

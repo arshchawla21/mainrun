@@ -1,0 +1,7 @@
+{
+  "run_dir": "../sweeps/3_arch/d22b957-variantbaseline-d512_valloss1.2438/",
+  "n_gen": 1000,
+  "critic_nats_per_char": 1.2451,
+  "critic_pseudo_ppl": 3.4733,
+  "model_val_loss": 1.2438475826461097
+}

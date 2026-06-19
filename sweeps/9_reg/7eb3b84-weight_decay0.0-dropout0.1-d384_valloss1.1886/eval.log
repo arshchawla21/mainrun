@@ -1,0 +1,7 @@
+{
+  "run_dir": "../sweeps/9_reg/7eb3b84-weight_decay0.0-dropout0.1-d384_valloss1.1886/",
+  "n_gen": 1000,
+  "critic_nats_per_char": 1.2576,
+  "critic_pseudo_ppl": 3.5169,
+  "model_val_loss": 1.1886067937811464
+}

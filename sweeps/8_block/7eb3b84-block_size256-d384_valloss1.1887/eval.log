@@ -1,0 +1,7 @@
+{
+  "run_dir": "../sweeps/8_block/7eb3b84-block_size256-d384_valloss1.1887/",
+  "n_gen": 1000,
+  "critic_nats_per_char": 1.2508,
+  "critic_pseudo_ppl": 3.4933,
+  "model_val_loss": 1.1887390244515492
+}

@@ -210,52 +210,6 @@
     }
   },
   {
-    "vocab_size": 12000,
-    "fertility": 0.24282014043188804,
-    "mean_seq_len": 11.7371,
-    "p95_seq_len": 20.0,
-    "vocab_utilisation": 0.8978333333333334,
-    "rare_token_pct": 0.4994166666666667,
-    "unused_token_pct": 0.10216666666666667,
-    "tokenization": {
-      "JavaScript": [
-        "\u0120JavaScript"
-      ],
-      "PostgreSQL": [
-        "\u0120PostgreSQL"
-      ],
-      "Kubernetes": [
-        "\u0120Kubernetes"
-      ],
-      "open-source": [
-        "\u0120open",
-        "-",
-        "source"
-      ],
-      "LLM": [
-        "\u0120LLM"
-      ],
-      "API": [
-        "\u0120API"
-      ],
-      "GitHub": [
-        "\u0120GitHub"
-      ],
-      "machine learning": [
-        "\u0120machine",
-        "\u0120learning"
-      ],
-      "Show HN": [
-        "\u0120Show",
-        "\u0120HN"
-      ],
-      "Ask HN": [
-        "\u0120Ask",
-        "\u0120HN"
-      ]
-    }
-  },
-  {
     "vocab_size": 16000,
     "fertility": 0.2322484411398402,
     "mean_seq_len": 11.2261,
@@ -302,144 +256,6 @@
     }
   },
   {
-    "vocab_size": 20000,
-    "fertility": 0.22544614226072995,
-    "mean_seq_len": 10.8973,
-    "p95_seq_len": 19.0,
-    "vocab_utilisation": 0.7424,
-    "rare_token_pct": 0.536,
-    "unused_token_pct": 0.2576,
-    "tokenization": {
-      "JavaScript": [
-        "\u0120JavaScript"
-      ],
-      "PostgreSQL": [
-        "\u0120PostgreSQL"
-      ],
-      "Kubernetes": [
-        "\u0120Kubernetes"
-      ],
-      "open-source": [
-        "\u0120open",
-        "-",
-        "source"
-      ],
-      "LLM": [
-        "\u0120LLM"
-      ],
-      "API": [
-        "\u0120API"
-      ],
-      "GitHub": [
-        "\u0120GitHub"
-      ],
-      "machine learning": [
-        "\u0120machine",
-        "\u0120learning"
-      ],
-      "Show HN": [
-        "\u0120Show",
-        "\u0120HN"
-      ],
-      "Ask HN": [
-        "\u0120Ask",
-        "\u0120HN"
-      ]
-    }
-  },
-  {
-    "vocab_size": 24000,
-    "fertility": 0.22076645854280194,
-    "mean_seq_len": 10.6711,
-    "p95_seq_len": 18.0,
-    "vocab_utilisation": 0.6681666666666667,
-    "rare_token_pct": 0.5051666666666667,
-    "unused_token_pct": 0.3318333333333333,
-    "tokenization": {
-      "JavaScript": [
-        "\u0120JavaScript"
-      ],
-      "PostgreSQL": [
-        "\u0120PostgreSQL"
-      ],
-      "Kubernetes": [
-        "\u0120Kubernetes"
-      ],
-      "open-source": [
-        "\u0120open",
-        "-",
-        "source"
-      ],
-      "LLM": [
-        "\u0120LLM"
-      ],
-      "API": [
-        "\u0120API"
-      ],
-      "GitHub": [
-        "\u0120GitHub"
-      ],
-      "machine learning": [
-        "\u0120machine",
-        "\u0120learning"
-      ],
-      "Show HN": [
-        "\u0120Show",
-        "\u0120HN"
-      ],
-      "Ask HN": [
-        "\u0120Ask",
-        "\u0120HN"
-      ]
-    }
-  },
-  {
-    "vocab_size": 28000,
-    "fertility": 0.21729083137829305,
-    "mean_seq_len": 10.5031,
-    "p95_seq_len": 18.0,
-    "vocab_utilisation": 0.6063214285714286,
-    "rare_token_pct": 0.47239285714285717,
-    "unused_token_pct": 0.39367857142857143,
-    "tokenization": {
-      "JavaScript": [
-        "\u0120JavaScript"
-      ],
-      "PostgreSQL": [
-        "\u0120PostgreSQL"
-      ],
-      "Kubernetes": [
-        "\u0120Kubernetes"
-      ],
-      "open-source": [
-        "\u0120open",
-        "-",
-        "source"
-      ],
-      "LLM": [
-        "\u0120LLM"
-      ],
-      "API": [
-        "\u0120API"
-      ],
-      "GitHub": [
-        "\u0120GitHub"
-      ],
-      "machine learning": [
-        "\u0120machine",
-        "\u0120learning"
-      ],
-      "Show HN": [
-        "\u0120Show",
-        "\u0120HN"
-      ],
-      "Ask HN": [
-        "\u0120Ask",
-        "\u0120HN"
-      ]
-    }
-  },
-  {
     "vocab_size": 32000,
     "fertility": 0.21455791263762863,
     "mean_seq_len": 10.371,
@@ -447,6 +263,98 @@
     "vocab_utilisation": 0.5530625,
     "rare_token_pct": 0.43934375,
     "unused_token_pct": 0.4469375,
+    "tokenization": {
+      "JavaScript": [
+        "\u0120JavaScript"
+      ],
+      "PostgreSQL": [
+        "\u0120PostgreSQL"
+      ],
+      "Kubernetes": [
+        "\u0120Kubernetes"
+      ],
+      "open-source": [
+        "\u0120open",
+        "-",
+        "source"
+      ],
+      "LLM": [
+        "\u0120LLM"
+      ],
+      "API": [
+        "\u0120API"
+      ],
+      "GitHub": [
+        "\u0120GitHub"
+      ],
+      "machine learning": [
+        "\u0120machine",
+        "\u0120learning"
+      ],
+      "Show HN": [
+        "\u0120Show",
+        "\u0120HN"
+      ],
+      "Ask HN": [
+        "\u0120Ask",
+        "\u0120HN"
+      ]
+    }
+  },
+  {
+    "vocab_size": 64000,
+    "fertility": 0.20579229817570951,
+    "mean_seq_len": 9.9473,
+    "p95_seq_len": 17.0,
+    "vocab_utilisation": 0.308328125,
+    "rare_token_pct": 0.2570625,
+    "unused_token_pct": 0.691671875,
+    "tokenization": {
+      "JavaScript": [
+        "\u0120JavaScript"
+      ],
+      "PostgreSQL": [
+        "\u0120PostgreSQL"
+      ],
+      "Kubernetes": [
+        "\u0120Kubernetes"
+      ],
+      "open-source": [
+        "\u0120open",
+        "-",
+        "source"
+      ],
+      "LLM": [
+        "\u0120LLM"
+      ],
+      "API": [
+        "\u0120API"
+      ],
+      "GitHub": [
+        "\u0120GitHub"
+      ],
+      "machine learning": [
+        "\u0120machine",
+        "\u0120learning"
+      ],
+      "Show HN": [
+        "\u0120Show",
+        "\u0120HN"
+      ],
+      "Ask HN": [
+        "\u0120Ask",
+        "\u0120HN"
+      ]
+    }
+  },
+  {
+    "vocab_size": 96000,
+    "fertility": 0.20251734710343713,
+    "mean_seq_len": 9.789,
+    "p95_seq_len": 17.0,
+    "vocab_utilisation": 0.20957291666666666,
+    "rare_token_pct": 0.17694791666666668,
+    "unused_token_pct": 0.7904270833333333,
     "tokenization": {
       "JavaScript": [
         "\u0120JavaScript"

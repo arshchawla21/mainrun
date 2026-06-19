@@ -1,0 +1,20 @@
+{
+  "sweep": "baseline",
+  "x": null,
+  "group": null,
+  "rows": [
+    {
+      "vocab_size": 16000,
+      "d_model": 512,
+      "n_head": 8,
+      "batch_size": 32,
+      "flops": 1289671262208000,
+      "emb_frac": 0.303,
+      "head_dim": 64,
+      "tokens": 7717185,
+      "N": 27172864,
+      "val": 1.7802879568743601,
+      "run_dir": "/workspaces/mainrun/sweeps/20260617_baseline/a9dfc13-vocab_size16k-d512_20260617-104106_valloss1.7803"
+    }
+  ]
+}
