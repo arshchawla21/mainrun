@@ -54,13 +54,17 @@ class Sweep:
 # ============================ derived-param resolvers ============================
 def shape_for_budget(target, vocab, n_layer, head_dim=64):
     """Solve 12*n_layer*d^2 + vocab*d = target for d_model, then pick n_head so
-    d_model/n_head ~= head_dim (n_head even, d_model divisible by n_head)."""
+    d_model/n_head ~= head_dim. head_dim is forced EVEN (RoPE's rotate_half needs hd/2 pairs)
+    and d_model = n_head*head_dim, so it stays divisible by n_head."""
     a, b, c = 12 * n_layer, vocab, -target
     d_raw = (-b + (b * b - 4 * a * c) ** 0.5) / (2 * a)
     n_head = max(4, round(d_raw / head_dim))
     if n_head % 2:
         n_head += 1
-    d_model = max(n_head, round(d_raw / n_head) * n_head)
+    hd = max(2, round(d_raw / n_head))
+    if hd % 2:                              # even head_dim -> RoPE-safe
+        hd += 1
+    d_model = n_head * hd
     return d_model, n_head
 
 
