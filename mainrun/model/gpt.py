@@ -4,6 +4,15 @@ from torch.nn import functional as F
 from dataclasses import dataclass
 import math
 
+# FlexAttention powers title_masking (block-diagonal, per-title attention). Guarded so the module
+# still imports on older torch -- the assert in GPT.__init__ only fires if masking is actually requested.
+try:
+    from torch.nn.attention.flex_attention import flex_attention, create_block_mask
+    flex_attention = torch.compile(flex_attention)   # compiled kernel -> the fused fast path
+    _HAS_FLEX = True
+except Exception:
+    _HAS_FLEX = False
+
 @dataclass
 class GPTConfig:
     vocab_size: int
@@ -17,6 +26,16 @@ class GPTConfig:
     pos_type:  str = 'learned'
     qk_norm:   bool = False
     bias:      str = 'default'  # 'default' = original (nn.Linear + LayerNorm biases on); 'off' = no bias anywhere
+    title_masking: bool = False    # True -> attention confined within each <eos>-delimited title (needs rope)
+    eos_id:    int = -1            # token id of <eos>; only read when title_masking
+
+
+def make_doc_mask_mod(doc_ids):
+    """FlexAttention mask_mod: allow attention only where it's causal AND query/key share a title.
+    doc_ids: (B, T) long, the per-token title index (cumsum over <eos>)."""
+    def mask_mod(b, h, q_idx, kv_idx):
+        return (q_idx >= kv_idx) & (doc_ids[b, q_idx] == doc_ids[b, kv_idx])
+    return mask_mod
 
 
 def _use_bias(cfg) -> bool:
@@ -49,7 +68,7 @@ class CausalSelfAttention(nn.Module):
             # causal mask to ensure that attention is only applied to the left in the input sequence
             self.register_buffer("tril", torch.tril(torch.ones(cfg.block_size, cfg.block_size)))
 
-    def forward(self, x: torch.Tensor, cos=None, sin=None):
+    def forward(self, x: torch.Tensor, cos=None, sin=None, block_mask=None):
         B, T, C = x.size()
         qkv = self.qkv(x).view(B, T, 3, self.n_head, self.head_dim).transpose(1, 3)
         q, k, v = qkv[..., 0, :, :], qkv[..., 1, :, :], qkv[..., 2, :, :]   # each (B, nh, T, hd)
@@ -59,7 +78,10 @@ class CausalSelfAttention(nn.Module):
         if cos is not None:                       # pos_type == 'rope'
             q, k = apply_rope(q, k, cos, sin)
 
-        if self.flash:
+        if block_mask is not None:                # title_masking: causality lives in the mask_mod
+            # NB: FlexAttention has no dropout_p -> no attention dropout on this path (resid_drop still applies).
+            y = flex_attention(q, k, v, block_mask=block_mask)
+        elif self.flash:
             # efficient attention using Flash Attention CUDA kernels ref: https://github.com/karpathy/nanoGPT/blob/master/model.py
             y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout, is_causal=True)
         else:
@@ -123,8 +145,8 @@ class Block(nn.Module):
             self.mlp  = SwiGLU(cfg)
         else:
             raise ValueError(f"Unknown mlp_type: {cfg.mlp_type}")
-    def forward(self, x, cos=None, sin=None):
-        x = x + self.attn(self.ln1(x), cos, sin)
+    def forward(self, x, cos=None, sin=None, block_mask=None):
+        x = x + self.attn(self.ln1(x), cos, sin, block_mask)
         x = x + self.mlp(self.ln2(x))
         return x
 
@@ -150,6 +172,12 @@ class GPT(nn.Module):
     def __init__(self, cfg: GPTConfig):
         super().__init__()
         self.cfg = cfg
+        if cfg.title_masking:
+            # masking is only train/eval-consistent under *relative* positions: RoPE's q.k depends on
+            # (i-j), so a title's attention is invariant to where it sits in the packed block. Absolute
+            # (learned) positions would make the same title differ by offset -> inconsistent. Hence rope.
+            assert cfg.pos_type == 'rope', "title_masking requires pos_type='rope' (relative positions)"
+            assert _HAS_FLEX, "title_masking needs FlexAttention (PyTorch >= 2.5)"
         self.token_emb = nn.Embedding(cfg.vocab_size, cfg.d_model)
         if cfg.pos_type == 'learned':
             self.pos_emb = nn.Parameter(torch.zeros(1, cfg.block_size, cfg.d_model))
@@ -190,7 +218,14 @@ class GPT(nn.Module):
         x = self.drop(x)
         cos = self.rope_cos[:T] if self.cfg.pos_type == 'rope' else None
         sin = self.rope_sin[:T] if self.cfg.pos_type == 'rope' else None
-        for block in self.blocks: x = block(x, cos, sin)
+        block_mask = None
+        if self.cfg.title_masking:
+            # per-token title index: <eos> starts a new doc (cumsum is inclusive, so each <eos> groups
+            # with the title that follows it -> acts as that title's BOS). Rebuilt per forward (data-dep);
+            # eval/generate go through this same path, so masking is consistent without touching evaluate().
+            doc_ids = (idx == self.cfg.eos_id).cumsum(-1)
+            block_mask = create_block_mask(make_doc_mask_mod(doc_ids), B, None, T, T, device=idx.device)
+        for block in self.blocks: x = block(x, cos, sin, block_mask)
         x = self.ln_f(x)
         logits = self.head(x)
         if targets is None:

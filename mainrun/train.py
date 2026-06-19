@@ -34,6 +34,7 @@ class Hyperparameters:
     pos_type : str = 'learned' # 'learned' | 'rope'
     qk_norm: bool = False
     bias: str = 'default'   # 'default' = original (Linear + LayerNorm biases) | 'off' = no bias anywhere
+    title_masking: bool = False 
     block_size: int = 128
     batch_size: int = 64
     vocab_size: int = 16_000
@@ -240,6 +241,7 @@ def main(args: Optional[Hyperparameters] = None) -> dict:
     raw_tok = train_tokenizer(args.token_type, train_titles+val_titles, args.vocab_size,
                               eos_token=eos_token, transition_ratio=args.transition_ratio)
     tok = Tokenizer(raw_tok)
+    eos_id = raw_tok.token_to_id(eos_token)   # for title_masking: marks the <eos> title boundaries
     train_text = eos_token.join(train_titles) + eos_token
     val_text = eos_token.join(val_titles) + eos_token
     train_ids = torch.tensor(tok.encode(train_text), dtype=torch.long)
@@ -273,6 +275,8 @@ def main(args: Optional[Hyperparameters] = None) -> dict:
         pos_type   = args.pos_type,
         qk_norm    = args.qk_norm,
         bias       = args.bias,
+        title_masking = args.title_masking,
+        eos_id     = eos_id,
     )
     cfg = GPTConfig(**cfg_dict)
 
