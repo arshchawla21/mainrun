@@ -31,7 +31,7 @@ def ablate_arch(p):
 EXPERIMENTS = {
     # baseline:
     "baseline": Sweep(
-        name="baseline",
+        name="0_baseline",
         axes={"vocab_size": [16_000]},
     ),
 
@@ -60,7 +60,7 @@ EXPERIMENTS = {
     #             Muon's matrices (axis lr); the AdamW-aux group runs at args.lr_hybird (default 3e-4).
     #             Found: best: optim_alg=muonhybrid, lr=0.01  val=1.2767
     "optim": Sweep(
-        name="optim_baseline",
+        name="1_optim",
         axes={"optim_alg": ["sgd", "adamw", "muonhybrid"],
               "lr": [1e-4, 3e-4, 1e-3, 3e-3, 1e-2, 3e-2]},
         x="lr", group="optim_alg",
@@ -74,7 +74,7 @@ EXPERIMENTS = {
     # warmup held at 0.05; sweep warmup separately if decay looks promising.
     # 18/06/2026
     "decay": Sweep(
-        name="wsd_decay",
+        name="2_wsd_decay",
         axes={"decay_frac": [0.1, 0.2, 0.3, 0.4, 0.6],
               "decay_type": ["linear", "cosine", "sqrt"]},
         hold={
@@ -95,7 +95,7 @@ EXPERIMENTS = {
     # Keep what helps, then re-check the surviving bundle together (interactions).
     # 19/06/2026
     "ablation": Sweep(
-        name="arch_ablation",
+        name="3_arch",
         axes={"variant": ["baseline", "rmsnorm", "swiglu", "rope", "qk_norm", "bias_off"]},
         hold={
             "optim_type": "wsd",
@@ -117,8 +117,9 @@ EXPERIMENTS = {
     #             (every (tok, vocab) cell is resized to ~32M params (close to default) -> a fair head-to-head.)
     # 17/06/2026: added superbpe (two-stage; transition_ratio held at the 0.75 default for this grid).
     # 17/06/2026: move optimiser sweep to be prior, found adamw = lr 3e-4 to be suitable
-    "tok_isoparam": Sweep(
-        name="tok_isoparam_32M",
+    # 19/06/2026: run with latest architecture + muonhybrid opt
+    "tok": Sweep(
+        name="4_tokenizer",
         axes={"token_type": ["bpe", "unigram", "wordpiece", "superbpe"],
               "vocab_size": [8_000, 16_000, 32_000, 64_000, 96_000]},
         hold={
@@ -137,41 +138,136 @@ EXPERIMENTS = {
         tokens_per_step=4096,
     ),
 
-    # --- joint architecture search: size and shape were each 1-D (size = width@L6, shape = depth@fixed-N),
+    # --- joint architecture/shape search: size and shape were each 1-D (size = width@L6, shape = depth@fixed-N),
     # so neither saw the depth x width interaction. shape went monotonically deeper -> maybe bigger N WITH
     # more layers wins. Here params are NOT pinned: we grid depth x width directly and let N (total, incl.
     # embedding) fall out onto the x-axis. n_head is derived (head_dim~64). N spans ~35M-190M @ 64k vocab.
     # Read it as val vs N, one curve per depth -> does the deeper curve keep dropping as N grows?
-    # 18/06/2026
-    "arch": Sweep(
-        name="arch",
+    # 18/06/2026: 
+    # 19/06/2026: found layers12, d384, heads6
+    "shape": Sweep(
+        name="5_shape",
         axes={"n_layer": [6, 8, 12, 16, 20],
-              "d_model": [384, 512, 640, 768]},   # multiples of 64 -> exact head_dim=64
+              "d_model": [256, 384, 512, 640, 768]},   # multiples of 64 -> exact head_dim=64
         hold={
-            # "vocab_size": 16_000, 
-            # "token_type": "unigram", 
+            "vocab_size": 16_000, 
+            "token_type": "unigram", 
             "optim_alg": "muonhybrid", 
-            "lr": 1e-2,
             "optim_type": "wsd",
+            "lr": 1e-2,
             "warmup_frac": 0.05,
             "decay_frac": 0.1,
             "decay_type": "sqrt",
             "norm_type": "rmsnorm",
             "pos_type": "rope",
         },
-        resolve=heads_for(head_dim=64),           # only sets n_head; d_model/n_layer come from the axes
+        resolve=heads_for(head_dim=64), # only sets n_head; d_model/n_layer come from the axes
         x="N", group="n_layer",
+        tokens_per_step=4096,
+    ),
+
+    # --- title masking ablation: FlexAttention block-diagonal mask confining attention within each
+    # <eos>-delimited title vs the current full-causal baseline. Both legs are pos_type='rope'
+    # (masking asserts relative positions). eos_id is derived in train.py, so nothing to set here.
+    # After this, re-run `block` with the winner -> if the block curve flattens, the earlier
+    # larger-is-better was cross-boundary leakage (see changes.md).
+    # 19/06/2026
+    "masking": Sweep(
+        name="6_masking",
+        axes={"title_masking": [False, True]},
+        hold={
+            "vocab_size": 16_000,
+            "token_type": "unigram",
+            "optim_alg": "muonhybrid",
+            "optim_type": "wsd",
+            "lr": 1e-2,
+            "warmup_frac": 0.05,
+            "decay_frac": 0.1,
+            "decay_type": "sqrt",
+            "norm_type": "rmsnorm",
+            "pos_type": "rope",
+            "n_layer": 12,
+            "d_model": 384,
+            "n_head": 6
+        },
+        x="title_masking",
+        tokens_per_step=4096,
+    ),
+
+    # --- tokens-per-step sweep at FIXED block_size=128 (= a batch sweep, framed as tokens/step).
+    # block held at 128, so batch_size IS tokens/step (= batch*128): batch 8/16/32/64 -> ts 1024/2048/
+    # 4096/8192. Fewer tokens/step -> more optimiser steps over the fixed 7 epochs (and noisier grads).
+    # lr fixed at 0.01 (established best); tokens_per_step NOT pinned so batch_size drives it.
+    # 19/06/2026
+    "tps": Sweep(
+        name="7_tokens_per_step",
+        axes={"batch_size": [8, 16, 32, 64]},   # @block128 -> tokens/step 1024, 2048, 4096, 8192
+        hold={
+            "block_size": 128,
+            "vocab_size": 16_000,
+            "token_type": "unigram",
+            "optim_alg": "muonhybrid",
+            "optim_type": "wsd",
+            "lr": 1e-2,
+            "warmup_frac": 0.05,
+            "decay_frac": 0.1,
+            "decay_type": "sqrt",
+            "norm_type": "rmsnorm",
+            "pos_type": "rope",
+            "n_layer": 12,
+            "d_model": 384,
+            "n_head": 6,
+            "title_masking": True,
+        },
+        x="batch_size",
+    ),
+
+    # --- block at fixed tokens per step
+    "block": Sweep(
+        name="8_block",
+        axes={"block_size": [16, 32, 64, 128, 256, 512]},
+        hold={
+            "vocab_size": 16_000,
+            "token_type": "unigram",
+            "optim_alg": "muonhybrid",
+            "optim_type": "wsd",
+            "lr": 1e-2,
+            "warmup_frac": 0.05,
+            "decay_frac": 0.1,
+            "decay_type": "sqrt",
+            "norm_type": "rmsnorm",
+            "pos_type": "rope",
+            "n_layer": 12,
+            "d_model": 384,
+            "n_head": 6,
+            "title_masking": True
+        },
+        x="block_size",
         tokens_per_step=4096,
     ),
 
     # --- regularisation sweep: at the winning config, tune weight_decay x dropout.
     "reg": Sweep(
-        name="reg",
+        name="9_reg",
         axes={"weight_decay": [0.0, 0.01, 0.1],
               "dropout": [0.0, 0.1, 0.2]},
-        # hold={"vocab_size": 64_000, "n_layer": ___,         # fill from size / shape results
-        #       "optim_type": ___, "lr": ___},                # fill from optim results
-        # resolve=solve_width(budget=___, head_dim=64),       # fill N* from size results
+        hold={
+            "vocab_size": 16_000,
+            "token_type": "unigram",
+            "optim_alg": "muonhybrid",
+            "optim_type": "wsd",
+            "lr": 1e-2,
+            "warmup_frac": 0.05,
+            "decay_frac": 0.1,
+            "decay_type": "sqrt",
+            "norm_type": "rmsnorm",
+            "pos_type": "rope",
+            "n_layer": 12,
+            "d_model": 384,
+            "n_head": 6,
+            "title_masking": True,
+            "block_size": 256
+        },
         x="weight_decay", group="dropout",
         tokens_per_step=4096,
     ),
