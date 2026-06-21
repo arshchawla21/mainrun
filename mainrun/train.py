@@ -21,20 +21,7 @@ from model.optimizer import build_optimizer
 
 @dataclass
 class Hyperparameters:
-    attn_type: str = 'MHA'
-    token_type: str = 'bpe'   # 'bpe' | 'unigram' | 'wordpiece' | 'superbpe' | 'wordlevel'
-    transition_ratio: float = 0.75  # superbpe only: fraction of vocab spent on stage-1 subwords
-    optim_type: str = 'cosine' # LR schedule: 'cosine' (CosineAnnealingLR) | 'wsd' (warmup-stable-decay)
-    optim_alg: str = 'adamw'   # gradient-descent algorithm: 'sgd' | 'adamw' | 'muonhybrid'
-    warmup_frac: float = 0.05  # wsd only: fraction of steps spent in linear warmup (inert for cosine)
-    decay_frac: float = 0.2    # wsd only: fraction of steps spent in the final decay (inert for cosine)
-    decay_type: str = 'cosine' # wsd only: decay shape -- 'linear' | 'cosine' | 'sqrt' (1-sqrt)
-    norm_type: str = 'layernorm' # 'layernorm' | 'rmsnorm'
-    mlp_type: str = 'gelu' # 'gelu' | 'swiglu'
-    pos_type : str = 'learned' # 'learned' | 'rope'
-    qk_norm: bool = False
-    bias: str = 'default'   # 'default' = original (Linear + LayerNorm biases) | 'off' = no bias anywhere
-    title_masking: bool = False 
+    # phase A
     block_size: int = 128
     batch_size: int = 64
     vocab_size: int = 16_000
@@ -46,6 +33,27 @@ class Hyperparameters:
     lr_hybird: float = 3e-4
     weight_decay: float = 0.01
     evals_per_epoch: int = 3
+
+    # improvements
+    token_type: str = 'bpe'   # 'bpe' | 'unigram' | 'wordpiece' | 'superbpe' | 'wordlevel'
+    transition_ratio: float = 0.75  # superbpe only: fraction of vocab spent on stage-1 subwords
+    optim_type: str = 'cosine' # LR schedule: 'cosine' (CosineAnnealingLR) | 'wsd' (warmup-stable-decay)
+    optim_alg: str = 'sgd'   # gradient-descent algorithm: 'sgd' | 'adamw' | 'muonhybrid'
+    warmup_frac: float = 0.05  # wsd only: fraction of steps spent in linear warmup (inert for cosine)
+    decay_frac: float = 0.2    # wsd only: fraction of steps spent in the final decay (inert for cosine)
+    decay_type: str = 'cosine' # wsd only: decay shape -- 'linear' | 'cosine' | 'sqrt' (1-sqrt)
+    norm_type: str = 'layernorm' # 'layernorm' | 'rmsnorm'
+    mlp_type: str = 'gelu' # 'gelu' | 'swiglu'
+    pos_type : str = 'learned' # 'learned' | 'rope'
+    qk_norm: bool = False
+    bias: str = 'default'   # 'default' = original (Linear + LayerNorm biases) | 'off' = no bias anywhere
+    title_masking: bool = False 
+
+    # phase B
+    gpt_v2: bool = False # if true, we use the new model (gpt_v2, with our improvements from A present)
+    kv_cache: str = False 
+    attn_type: str = 'mha'   # v2 only: mha | single_head | value_residual | output_gated | differential
+    residual: str = 'none'   # v2 only: none | unet | embedding_shortcut | layerscale
 
     epochs: int = 7
     seed: int = 1337
@@ -277,10 +285,16 @@ def main(args: Optional[Hyperparameters] = None) -> dict:
         bias       = args.bias,
         title_masking = args.title_masking,
         eos_id     = eos_id,
+        attn_type  = args.attn_type,
+        residual   = args.residual,
     )
     cfg = GPTConfig(**cfg_dict)
 
-    model = GPT(cfg).to(device)
+    if args.gpt_v2:
+        from model.gpt_v2 import GPT2
+        model = GPT2(cfg).to(device)       # locked Phase A backbone; arch flags above are ignored
+    else:
+        model = GPT(cfg).to(device)
 
     model_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.log("model_info", parameters_count=model_params)
