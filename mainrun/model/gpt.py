@@ -127,17 +127,19 @@ class RMSNorm(nn.Module):
         x = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
         return x * self.weight
 
+def make_norm(cfg: GPTConfig):
+    """LayerNorm or RMSNorm per cfg.norm_type (LayerNorm honours the bias setting)."""
+    if cfg.norm_type == 'layernorm':
+        return nn.LayerNorm(cfg.d_model, bias=_use_bias(cfg))
+    if cfg.norm_type == 'rmsnorm':
+        return RMSNorm(cfg.d_model)
+    raise ValueError(f"Unknown norm_type: {cfg.norm_type}")
+
 class Block(nn.Module):
     def __init__(self, cfg: GPTConfig):
         super().__init__()
-        if cfg.norm_type == 'layernorm':
-            self.ln1 = nn.LayerNorm(cfg.d_model, bias=_use_bias(cfg))
-            self.ln2 = nn.LayerNorm(cfg.d_model, bias=_use_bias(cfg))
-        elif cfg.norm_type == 'rmsnorm':
-            self.ln1 = RMSNorm(cfg.d_model)
-            self.ln2 = RMSNorm(cfg.d_model)
-        else:
-            raise ValueError(f"Unknown norm_type: {cfg.norm_type}")
+        self.ln1 = make_norm(cfg)
+        self.ln2 = make_norm(cfg)
         self.attn = CausalSelfAttention(cfg)
         if cfg.mlp_type == 'gelu':
             self.mlp  = MLP(cfg)
@@ -150,58 +152,58 @@ class Block(nn.Module):
         x = x + self.mlp(self.ln2(x))
         return x
 
-# RoPE https://arxiv.org/abs/2104.09864
-def build_rope_cache(seq_len, head_dim, base=10000.0):
-    inv_freq = 1.0 / (base ** (torch.arange(0, head_dim, 2).float() / head_dim))
-    t = torch.arange(seq_len).float()
-    freqs = torch.outer(t, inv_freq)              # (T, hd/2)
-    emb = torch.cat((freqs, freqs), dim=-1)       # (T, hd)
-    return emb.cos(), emb.sin()                   # each (T, hd)
-
+# RoPE  https://arxiv.org/abs/2104.09864  (NeoX-style: cos/sin span the full head_dim)
 def rotate_half(x):
     x1, x2 = x.chunk(2, dim=-1)
     return torch.cat((-x2, x1), dim=-1)
 
-def apply_rope(q, k, cos, sin):                   # q,k: (B, nh, T, hd)
-    cos, sin = cos[None, None], sin[None, None]   # -> (1,1,T,hd)
+def apply_rope(q, k, cos, sin):                   # q,k: (B, nh, T, hd); cos,sin: (T, hd)
+    cos, sin = cos[None, None], sin[None, None]   # broadcast over batch + heads
     q = (q * cos) + (rotate_half(q) * sin)
     k = (k * cos) + (rotate_half(k) * sin)
     return q, k
+
+class RotaryEmbedding(nn.Module):
+    """Precompute the rotary cos/sin table once; forward(T) returns its length-T prefix. cos/sin are
+    non-persistent buffers (rebuilt at init, never saved), so they follow .to(device) and stay out of
+    the state dict."""
+    def __init__(self, head_dim, max_seq_len, base=10000.0):
+        super().__init__()
+        assert head_dim % 2 == 0, "RoPE needs an even head_dim"
+        inv_freq = 1.0 / (base ** (torch.arange(0, head_dim, 2).float() / head_dim))
+        freqs = torch.outer(torch.arange(max_seq_len).float(), inv_freq)   # (T, hd/2)
+        emb = torch.cat((freqs, freqs), dim=-1)                            # (T, hd)
+        self.register_buffer("cos", emb.cos(), persistent=False)
+        self.register_buffer("sin", emb.sin(), persistent=False)
+
+    def forward(self, seq_len):
+        return self.cos[:seq_len], self.sin[:seq_len]
 
 class GPT(nn.Module):
     def __init__(self, cfg: GPTConfig):
         super().__init__()
         self.cfg = cfg
         if cfg.title_masking:
-            # masking is only train/eval-consistent under *relative* positions: RoPE's q.k depends on
-            # (i-j), so a title's attention is invariant to where it sits in the packed block. Absolute
-            # (learned) positions would make the same title differ by offset -> inconsistent. Hence rope.
+            # masking requires relative positional embedding
             assert cfg.pos_type == 'rope', "title_masking requires pos_type='rope' (relative positions)"
             assert _HAS_FLEX, "title_masking needs FlexAttention (PyTorch >= 2.5)"
+
         self.token_emb = nn.Embedding(cfg.vocab_size, cfg.d_model)
+        self.pos_emb, self.rope = None, None             # exactly one is set, chosen by pos_type
         if cfg.pos_type == 'learned':
             self.pos_emb = nn.Parameter(torch.zeros(1, cfg.block_size, cfg.d_model))
         elif cfg.pos_type == 'rope':
-            self.pos_emb = None
-            head_dim = cfg.d_model // cfg.n_head
-            assert head_dim % 2 == 0, "RoPE needs an even head_dim"
-            cos, sin = build_rope_cache(cfg.block_size, head_dim)
-            self.register_buffer("rope_cos", cos, persistent=False)  # non-persistent: moves with .to(device), not saved
-            self.register_buffer("rope_sin", sin, persistent=False)
+            self.rope = RotaryEmbedding(cfg.d_model // cfg.n_head, cfg.block_size)
         else:
             raise ValueError(f"Unknown pos_type: {cfg.pos_type}")
-        self.drop      = nn.Dropout(cfg.dropout)
-        self.blocks    = nn.ModuleList([Block(cfg) for _ in range(cfg.n_layer)])
-        if cfg.norm_type == 'layernorm':
-            self.ln_f = nn.LayerNorm(cfg.d_model, bias=_use_bias(cfg))
-        elif cfg.norm_type == 'rmsnorm':
-            self.ln_f = RMSNorm(cfg.d_model)
-        else:
-            raise ValueError(f"Unknown norm_type: {cfg.norm_type}")
-        self.head      = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
+
+        self.drop   = nn.Dropout(cfg.dropout)
+        self.blocks = nn.ModuleList([Block(cfg) for _ in range(cfg.n_layer)])
+        self.ln_f   = make_norm(cfg)
+        self.head   = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
 
         self.apply(self._init_weights)
-        self.head.weight = self.token_emb.weight
+        self.head.weight = self.token_emb.weight         # tied input/output embeddings
 
     @staticmethod
     def _init_weights(module):
@@ -211,28 +213,31 @@ class GPT(nn.Module):
                 nn.init.zeros_(module.bias)
 
     def forward(self, idx: torch.Tensor, targets: torch.Tensor | None = None):
-        B, T = idx.size()
+        T = idx.size(1)
         x = self.token_emb(idx)
-        if self.pos_emb is not None:
+        if self.pos_emb is not None:                     # learned absolute positions
             x = x + self.pos_emb[:, :T, :]
         x = self.drop(x)
-        cos = self.rope_cos[:T] if self.cfg.pos_type == 'rope' else None
-        sin = self.rope_sin[:T] if self.cfg.pos_type == 'rope' else None
-        block_mask = None
-        if self.cfg.title_masking:
-            # per-token title index: <eos> starts a new doc (cumsum is inclusive, so each <eos> groups
-            # with the title that follows it -> acts as that title's BOS). Rebuilt per forward (data-dep);
-            # eval/generate go through this same path, so masking is consistent without touching evaluate().
-            doc_ids = (idx == self.cfg.eos_id).cumsum(-1)
-            block_mask = create_block_mask(make_doc_mask_mod(doc_ids), B, None, T, T, device=idx.device)
-        for block in self.blocks: x = block(x, cos, sin, block_mask)
-        x = self.ln_f(x)
-        logits = self.head(x)
-        if targets is None:
-            loss = None
-        else:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), reduction='mean')
+
+        cos, sin = self.rope(T) if self.rope is not None else (None, None)
+        block_mask = self._title_mask(idx) if self.cfg.title_masking else None
+        for block in self.blocks:
+            x = block(x, cos, sin, block_mask)
+        logits = self.head(self.ln_f(x))
+
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
         return logits, loss
+
+    def _title_mask(self, idx):
+        """Block-diagonal FlexAttention mask confining attention within each <eos>-delimited title.
+        doc id = inclusive cumsum over <eos>, so each <eos> opens (acts as BOS of) the next title.
+        Rebuilt from the tokens each forward, so train / eval / generate mask identically and
+        evaluate() is never touched."""
+        B, T = idx.size()
+        doc_ids = (idx == self.cfg.eos_id).cumsum(-1)
+        return create_block_mask(make_doc_mask_mod(doc_ids), B, None, T, T, device=idx.device)
 
     # adapted from https://github.com/karpathy/nanoGPT/blob/master/model.py
     @torch.no_grad()
