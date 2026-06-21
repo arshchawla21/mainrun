@@ -300,4 +300,34 @@ EXPERIMENTS = {
         x="attn_type",
         tokens_per_step=4096,
     ),
+
+    # --- Phase B cross-layer residual paths (gpt_v2), on the output_gated backbone (attention winner).
+    # All extra information paths beyond the per-block residual: unet (symmetric encoder-decoder skips),
+    # embedding_shortcut (feed token embeddings into deep layers), layerscale (learned per-channel
+    # residual scale). All gated/iso-param. See report "Cross-layer residual paths".
+    # 20/06/2026
+    "residual": Sweep(
+        name="11_residual",
+        axes={"residual": ["none", "unet", "embedding_shortcut", "layerscale"]},
+        hold={
+            "gpt_v2": True,
+            "attn_type": "output_gated",     # carry the attention winner forward
+            "vocab_size": 16_000,
+            "token_type": "unigram",
+            "optim_alg": "muonhybrid",
+            "optim_type": "wsd",
+            "lr": 1e-2,
+            "warmup_frac": 0.05,
+            "decay_frac": 0.1,
+            "decay_type": "sqrt",
+            "title_masking": True,
+            "n_layer": 12,
+            "d_model": 384,
+            "n_head": 6,
+            "block_size": 256,
+            "dropout": 0.2,
+        },
+        x="residual",
+        tokens_per_step=4096,
+    ),
 }
