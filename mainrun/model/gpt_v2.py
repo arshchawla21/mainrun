@@ -152,10 +152,19 @@ class Block(nn.Module):
         self.ln2  = RMSNorm(cfg.d_model)
         self.attn = attn_cls(cfg, n_head)
         self.mlp  = MLP(cfg)
+        self.layerscale = cfg.residual == 'layerscale'
+        if self.layerscale:                            # per-channel residual scale, init 0.1 (CaiT, <=18 layers)
+            self.ls1 = nn.Parameter(torch.full((cfg.d_model,), 0.1))
+            self.ls2 = nn.Parameter(torch.full((cfg.d_model,), 0.1))
+
     def forward(self, x, cos, sin, mask=None, v0=None):
         a, v = self.attn(self.ln1(x), cos, sin, mask, v0)
-        x = x + a
-        x = x + self.mlp(self.ln2(x))
+        if self.layerscale:
+            x = x + self.ls1 * a
+            x = x + self.ls2 * self.mlp(self.ln2(x))
+        else:
+            x = x + a
+            x = x + self.mlp(self.ln2(x))
         return x, v
 
 
@@ -174,6 +183,13 @@ class GPT2(nn.Module):
         self.ln_f      = RMSNorm(cfg.d_model)
         self.head      = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
 
+        # cross-layer paths inject into the decoder half (second half of the blocks), gated, init 0.
+        self.half = cfg.n_layer // 2
+        if cfg.residual == 'unet':                      # symmetric encoder-decoder skips
+            self.skip_gates = nn.ParameterList([nn.Parameter(torch.zeros(1)) for _ in range(self.half)])
+        elif cfg.residual == 'embedding_shortcut':      # feed token embeddings into deep layers
+            self.emb_gates = nn.ParameterList([nn.Parameter(torch.zeros(1)) for _ in range(cfg.n_layer - self.half)])
+
         self.apply(self._init_weights)
         self.head.weight = self.token_emb.weight         # tied input/output embeddings
 
@@ -186,15 +202,25 @@ class GPT2(nn.Module):
 
     def forward(self, idx, targets=None):
         T = idx.size(1)
-        x = self.drop(self.token_emb(idx))
+        e0 = self.token_emb(idx)                         # raw token embeddings (embedding_shortcut source)
+        x = self.drop(e0)
         cos, sin = self.rope(T)
         mask = self._mask(idx) if self.cfg.title_masking else None
-        v0 = None
+        res, h = self.cfg.residual, self.half
+        saved, v0 = [None] * h, None
         for i, block in enumerate(self.blocks):
+            if i >= h:                                   # decoder half: inject the chosen cross-layer path
+                if res == 'unet':
+                    x = x + self.skip_gates[i - h] * saved[h - 1 - (i - h)]   # mirror encoder block
+                elif res == 'embedding_shortcut':
+                    x = x + self.emb_gates[i - h] * e0
             x, v = block(x, cos, sin, mask, v0)
             if i == 0:
                 v0 = v                                   # first layer's values, for value_residual
-        logits = self.head(self.ln_f(x))
+            if res == 'unet' and i < h:
+                saved[i] = x                             # encoder half: save for the mirror skip
+        x = self.ln_f(x)
+        logits = self.head(x)
         loss = None
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
