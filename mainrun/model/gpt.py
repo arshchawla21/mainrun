@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from dataclasses import dataclass
 import math
+
+from model.config import GPTConfig
 
 # FlexAttention powers title_masking (block-diagonal, per-title attention). Guarded so the module
 # still imports on older torch -- the assert in GPT.__init__ only fires if masking is actually requested.
@@ -12,22 +13,6 @@ try:
     _HAS_FLEX = True
 except Exception:
     _HAS_FLEX = False
-
-@dataclass
-class GPTConfig:
-    vocab_size: int
-    block_size: int
-    n_layer: int
-    n_head: int
-    d_model: int
-    dropout: float
-    norm_type: str = 'layernorm'   # defaults = original arch, so old checkpoints reload unchanged
-    mlp_type:  str = 'gelu'
-    pos_type:  str = 'learned'
-    qk_norm:   bool = False
-    bias:      str = 'default'  # 'default' = original (nn.Linear + LayerNorm biases on); 'off' = no bias anywhere
-    title_masking: bool = False    # True -> attention confined within each <eos>-delimited title (needs rope)
-    eos_id:    int = -1            # token id of <eos>; only read when title_masking
 
 
 def make_doc_mask_mod(doc_ids):

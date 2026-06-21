@@ -29,7 +29,10 @@ def load_run(run_dir, device="cpu"):
         raise FileNotFoundError(f"no model.pt in {run_dir}")
     ckpt = torch.load(model_path, map_location=device, weights_only=False)
 
-    model = GPT(GPTConfig(**ckpt["config"]))
+    Model = GPT                                          # pick the variant the run was trained with
+    if ckpt.get("args", {}).get("gpt_v2"):
+        from model.gpt_v2 import GPT2 as Model
+    model = Model(GPTConfig(**ckpt["config"]))
     model.load_state_dict(ckpt["model_state_dict"])
     model.to(device).eval()
 
