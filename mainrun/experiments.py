@@ -270,4 +270,34 @@ EXPERIMENTS = {
         x="dropout",
         tokens_per_step=4096,
     ),
+
+    # --- Phase B attention ablation (gpt_v2). Swap the whole attention component at the Phase A
+    # optimal config: baseline MHA, single-head (lower bound), value-residual, output-gated, and
+    # differential. All iso-param. Capacity-limited model -> we bet on capacity/inductive-bias
+    # variants, not memory-savers (GQA/MLA dropped). See report "Alternative Attention Design".
+    # 20/06/2026
+    "attn": Sweep(
+        name="10_attn",
+        axes={"attn_type": ["mha", "single_head", "value_residual", "output_gated", "differential",
+                            "gated_value_residual"]},
+        hold={
+            "gpt_v2": True,              # required: v1 ignores attn_type
+            "vocab_size": 16_000,
+            "token_type": "unigram",
+            "optim_alg": "muonhybrid",
+            "optim_type": "wsd",
+            "lr": 1e-2,
+            "warmup_frac": 0.05,
+            "decay_frac": 0.1,
+            "decay_type": "sqrt",
+            "title_masking": True,
+            "n_layer": 12,
+            "d_model": 384,
+            "n_head": 6,
+            "block_size": 256,
+            "dropout": 0.2,
+        },
+        x="attn_type",
+        tokens_per_step=4096,
+    ),
 }
