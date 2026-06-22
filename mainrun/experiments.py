@@ -394,36 +394,6 @@ EXPERIMENTS = {
         tokens_per_step=4096,
     ),
 
-    # --- label smoothing: regularise the OUTPUT distribution (the part the aux_lr sweep showed overfits
-    # hardest). Softens one-hot targets in the TRAINING loss only (eval + logged train/val stay hard CE,
-    # so the train/val gap stays honestly measurable). eps=0 recovers the baseline -> clean superset.
-    # Aimed at closing the gap, not lowering the floor. 21/06/2026
-    "label_smooth": Sweep(
-        name="14_label_smooth",
-        axes={"label_smoothing": [0.0, 0.05, 0.1, 0.15]},
-        hold={
-            "gpt_v2": True,
-            "attn_type": "output_gated",
-            "vocab_size": 16_000,
-            "token_type": "unigram",
-            "optim_alg": "muonhybrid",
-            "optim_type": "wsd",
-            "lr": 1e-2,
-            "warmup_frac": 0.05,
-            "decay_frac": 0.1,
-            "decay_type": "sqrt",
-            "title_masking": True,
-            "n_layer": 12,
-            "d_model": 384,
-            "n_head": 6,
-            "block_size": 256,
-            "dropout": 0.2,
-            "residual": "layerscale"
-        },
-        x="label_smoothing",
-        tokens_per_step=4096,
-    ),
-
     # --- R-Drop x size frontier ---
     # 22/06/2026
     "rdrop_size": Sweep(
