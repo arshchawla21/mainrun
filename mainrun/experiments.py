@@ -28,6 +28,23 @@ def ablate_arch(p):
     return _ABLATION[p["variant"]]
 
 
+# Phase B rollback ablation: from the best model, flip ONE Phase-A-rejected choice back on, to check
+# coordinate descent still holds now that the rest of the model has changed (one override per variant).
+# Arch rollbacks stay at the best d512. Large-vocab tokenizers OOM at d512 under R-Drop (64k/96k
+# embeddings), so they + a matched unigram-16k reference run at d384/h6 -> compare those to unigram_d384.
+_ROLLBACK = {
+    "best":          {},                                                   # the current best, d512 (reference)
+    "bpe":        {"token_type": "bpe",},
+    "wordpiece":  {"token_type": "wordpiece"},
+    "superbpe":   {"token_type": "superbpe"},
+    "swiglu":        {"mlp_type": "swiglu"},
+    "qk_norm":       {"qk_norm": True},
+    "bias_off":      {"bias": "off"},
+}
+def rollback(p):
+    return _ROLLBACK[p["variant"]]
+
+
 EXPERIMENTS = {
     # baseline:
     "baseline": Sweep(
@@ -419,6 +436,24 @@ EXPERIMENTS = {
         },
         resolve=heads_for(64),        # n_head = d_model/64 (head_dim 64)
         x="d_model", group="rdrop",
+        tokens_per_step=4096,
+    ),
+
+    # --- rollback ablation: challenge coordinate descent on the FINAL Phase-B model
+    "rollback": Sweep(
+        name="14_rollback",
+        axes={"variant": ["best", "swiglu", "qk_norm", "bias_off"]},
+        hold={
+            "gpt_v2": True, "attn_type": "output_gated", "residual": "layerscale",
+            "rdrop": 2.0, "amp": True,
+            "vocab_size": 16_000, "token_type": "unigram",
+            "n_layer": 12, "d_model": 512, "n_head": 8, "block_size": 256, "dropout": 0.2,
+            "optim_alg": "muonhybrid", "optim_type": "wsd", "lr": 1e-2, "lr_hybird": 3e-4,
+            "warmup_frac": 0.05, "decay_frac": 0.1, "decay_type": "sqrt",
+            "title_masking": True, "weight_decay": 0.01,
+        },
+        resolve=rollback,             # variant -> the single Phase-A choice it flips back on
+        x="variant",
         tokens_per_step=4096,
     ),
 }
