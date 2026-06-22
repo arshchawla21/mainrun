@@ -328,17 +328,17 @@ def main(args: Optional[Hyperparameters] = None) -> dict:
             for _ in tqdm(range(1, batches + 1), desc=f"Epoch {epoch}/{args.epochs}"):
                 step += 1
                 xb, yb, ptr = get_batch(train_ids, ptr, args.block_size, args.batch_size, device)
-                # amp_ctx = torch.autocast("cuda", dtype=torch.bfloat16) if (args.amp and device == "cuda") else nullcontext()
-                # with amp_ctx:
-                if args.rdrop > 0:               # R-Drop: two dropout passes + symmetric-KL consistency
-                    lg1, l1 = model(xb, yb)
-                    lg2, l2 = model(xb, yb)
-                    lp1, lp2 = F.log_softmax(lg1, -1), F.log_softmax(lg2, -1)
-                    kl = 0.5 * ((lp1.exp() * (lp1 - lp2)).sum(-1) +
-                                (lp2.exp() * (lp2 - lp1)).sum(-1)).mean()
-                    loss = 0.5 * (l1 + l2) + args.rdrop * kl
-                else:
-                    _, loss = model(xb, yb)
+                amp_ctx = torch.autocast("cuda", dtype=torch.bfloat16) if (args.amp and device == "cuda") else nullcontext()
+                with amp_ctx:
+                    if args.rdrop > 0:               # R-Drop: two dropout passes + symmetric-KL consistency
+                        lg1, l1 = model(xb, yb)
+                        lg2, l2 = model(xb, yb)
+                        lp1, lp2 = F.log_softmax(lg1, -1), F.log_softmax(lg2, -1)
+                        kl = 0.5 * ((lp1.exp() * (lp1 - lp2)).sum(-1) +
+                                    (lp2.exp() * (lp2 - lp1)).sum(-1)).mean()
+                        loss = 0.5 * (l1 + l2) + args.rdrop * kl
+                    else:
+                        _, loss = model(xb, yb)
                 opt.zero_grad(set_to_none=True)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
