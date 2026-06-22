@@ -36,11 +36,18 @@ class Attention(nn.Module):
         self.qkv  = nn.Linear(cfg.d_model, 3 * cfg.d_model)
         self.proj = nn.Linear(cfg.d_model, cfg.d_model)
         self.resid_drop = nn.Dropout(cfg.dropout)
+        # per-head learned attention temperature: scale q by exp(g_h) (zero-init -> 1 -> no-op at step 0)
+        self.log_temp = nn.Parameter(torch.zeros(n_head)) if cfg.attn_temp else None
 
     def _qkv(self, x):
         B, T, _ = x.size()
         qkv = self.qkv(x).view(B, T, 3, self.n_head, self.head_dim).transpose(1, 3)
         return qkv[..., 0, :, :], qkv[..., 1, :, :], qkv[..., 2, :, :]   # each (B, nh, T, hd)
+
+    def _temp(self, q):
+        """Per-head softmax sharpness. Scaling q scales the q.k scores, so exp(g_h)>1 sharpens a head's
+        attention and <1 softens it; g is learned, zero-init. Commutes with RoPE (a scalar per head)."""
+        return q if self.log_temp is None else q * torch.exp(self.log_temp).view(1, -1, 1, 1)
 
     def _attn(self, q, k, v, mask):
         # mask is None (causal) or an additive per-title float mask (B,1,T,T). SDPA throughout so every
@@ -54,6 +61,7 @@ class Attention(nn.Module):
         B, T, C = x.size()
         q, k, v = self._qkv(x)
         q, k = apply_rope(q, k, cos, sin)
+        q = self._temp(q)
         y = self._attn(q, k, v, mask).transpose(1, 2).contiguous().view(B, T, C)
         return self.resid_drop(self.proj(y)), v
 
@@ -69,6 +77,7 @@ class ValueResidualAttention(Attention):
         B, T, C = x.size()
         q, k, v = self._qkv(x)
         q, k = apply_rope(q, k, cos, sin)
+        q = self._temp(q)
         if v0 is not None:                             # layer 0 has v0=None -> returns its raw v
             g = torch.sigmoid(self.lam)
             v = (1 - g) * v + g * v0
@@ -86,6 +95,7 @@ class OutputGatedAttention(Attention):
         B, T, C = x.size()
         q, k, v = self._qkv(x)
         q, k = apply_rope(q, k, cos, sin)
+        q = self._temp(q)
         y = self._attn(q, k, v, mask)                  # (B, nh, T, hd)
         g = torch.sigmoid(self.gate(x)).permute(0, 2, 1).unsqueeze(-1)   # (B, nh, T, 1)
         y = (y * g).transpose(1, 2).contiguous().view(B, T, C)
@@ -106,6 +116,7 @@ class DifferentialAttention(Attention):
     def forward(self, x, cos, sin, mask=None, v0=None):
         B, T, C = x.size()
         q, k, v = self._qkv(x)                         # (B, nh, T, hd)
+        q = self._temp(q)                              # per-head temperature (scales both diff halves)
         c2, s2 = self.rope_half(T)                     # (T, hd/2)
         q1, q2 = q.chunk(2, -1); k1, k2 = k.chunk(2, -1)
         q1, k1 = apply_rope(q1, k1, c2, s2)
@@ -127,6 +138,7 @@ class GatedValueResidualAttention(Attention):
         B, T, C = x.size()
         q, k, v = self._qkv(x)
         q, k = apply_rope(q, k, cos, sin)
+        q = self._temp(q)
         if v0 is not None:
             g = torch.sigmoid(self.lam)
             v = (1 - g) * v + g * v0
@@ -223,7 +235,8 @@ class GPT2(nn.Module):
         logits = self.head(x)
         loss = None
         if targets is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),
+                                   label_smoothing=self.cfg.label_smoothing)   # training objective only
         return logits, loss
 
     def _mask(self, idx):
