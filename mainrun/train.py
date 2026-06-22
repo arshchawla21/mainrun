@@ -1,5 +1,6 @@
 import utils
 import math, random, time
+from contextlib import nullcontext
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -54,6 +55,10 @@ class Hyperparameters:
     kv_cache: str = False 
     attn_type: str = 'mha'   # v2 only: mha | single_head | value_residual | output_gated | differential
     residual: str = 'none'   # v2 only: none | unet | embedding_shortcut | layerscale
+    attn_temp: bool = False  # v2 only: per-(layer,head) learned attention temperature
+    label_smoothing: float = 0.0  # v2 only: soften targets in the TRAINING loss (eval stays hard CE)
+    rdrop: float = 0.0       # R-Drop: weight on the symmetric-KL between two dropout passes (0 = off)
+    amp: bool = False        # bf16 autocast on the training forward (fits bigger models + R-Drop on 12GB)
 
     epochs: int = 7
     seed: int = 1337
@@ -287,6 +292,8 @@ def main(args: Optional[Hyperparameters] = None) -> dict:
         eos_id     = eos_id,
         attn_type  = args.attn_type,
         residual   = args.residual,
+        attn_temp  = args.attn_temp,
+        label_smoothing = args.label_smoothing,
     )
     cfg = GPTConfig(**cfg_dict)
 
@@ -321,7 +328,17 @@ def main(args: Optional[Hyperparameters] = None) -> dict:
             for _ in tqdm(range(1, batches + 1), desc=f"Epoch {epoch}/{args.epochs}"):
                 step += 1
                 xb, yb, ptr = get_batch(train_ids, ptr, args.block_size, args.batch_size, device)
-                _, loss = model(xb, yb)
+                # amp_ctx = torch.autocast("cuda", dtype=torch.bfloat16) if (args.amp and device == "cuda") else nullcontext()
+                # with amp_ctx:
+                if args.rdrop > 0:               # R-Drop: two dropout passes + symmetric-KL consistency
+                    lg1, l1 = model(xb, yb)
+                    lg2, l2 = model(xb, yb)
+                    lp1, lp2 = F.log_softmax(lg1, -1), F.log_softmax(lg2, -1)
+                    kl = 0.5 * ((lp1.exp() * (lp1 - lp2)).sum(-1) +
+                                (lp2.exp() * (lp2 - lp1)).sum(-1)).mean()
+                    loss = 0.5 * (l1 + l2) + args.rdrop * kl
+                else:
+                    _, loss = model(xb, yb)
                 opt.zero_grad(set_to_none=True)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
