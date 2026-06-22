@@ -330,4 +330,125 @@ EXPERIMENTS = {
         x="residual",
         tokens_per_step=4096,
     ),
+
+    # --- Phase B per-head attention temperature (gpt_v2), on the output_gated backbone. A learned
+    # per-(layer,head) scalar on q -> exp(g_h) scales the q.k scores, so each head picks its own softmax
+    # sharpness (zero-init = no-op). Idea informed by our own attention ablation: per-head dials on
+    # attention win (output_gated, value_residual), so we add one on a new axis (the distribution).
+    # See report "Per-head attention temperature".
+    # 21/06/2026
+    "attn_temp": Sweep(
+        name="12_attn_temp",
+        axes={"attn_temp": [False, True]},
+        hold={
+            "gpt_v2": True,
+            "attn_type": "output_gated",
+            "vocab_size": 16_000,
+            "token_type": "unigram",
+            "optim_alg": "muonhybrid",
+            "optim_type": "wsd",
+            "lr": 1e-2,
+            "warmup_frac": 0.05,
+            "decay_frac": 0.1,
+            "decay_type": "sqrt",
+            "title_masking": True,
+            "n_layer": 12,
+            "d_model": 384,
+            "n_head": 6,
+            "block_size": 256,
+            "dropout": 0.2,
+            "residual": "layerscale"
+        },
+        x="attn_temp",
+        tokens_per_step=4096,
+    ),
+
+    # --- aux learning-rate sweep (the second, untuned knob of our biggest win). muonhybrid drives the
+    # 2D matrices at lr=1e-2 but the AdamW-aux group (embeddings, tied head, norms, biases) runs at
+    # lr_hybird=3e-4 -- a 33x gap we never tuned. The embedding diagnostic (embed_diag.py) ruled out
+    # rare-token under-training (tied head -> dense gradients), so this is a balance/ratio question, not
+    # a rescue; NorMuon's tuned setup runs embeddings/output ABOVE hidden, hinting 3e-4 may be too low.
+    # 21/06/2026
+    "aux_lr": Sweep(
+        name="13_aux_lr",
+        axes={"lr_hybird": [3e-4, 1e-3, 3e-3, 1e-2]},
+        hold={
+            "gpt_v2": True,
+            "attn_type": "output_gated",
+            "vocab_size": 16_000,
+            "token_type": "unigram",
+            "optim_alg": "muonhybrid",
+            "optim_type": "wsd",
+            "lr": 1e-2,
+            "warmup_frac": 0.05,
+            "decay_frac": 0.1,
+            "decay_type": "sqrt",
+            "title_masking": True,
+            "n_layer": 12,
+            "d_model": 384,
+            "n_head": 6,
+            "block_size": 256,
+            "dropout": 0.2,
+        },
+        x="lr_hybird",
+        tokens_per_step=4096,
+    ),
+
+    # --- label smoothing: regularise the OUTPUT distribution (the part the aux_lr sweep showed overfits
+    # hardest). Softens one-hot targets in the TRAINING loss only (eval + logged train/val stay hard CE,
+    # so the train/val gap stays honestly measurable). eps=0 recovers the baseline -> clean superset.
+    # Aimed at closing the gap, not lowering the floor. 21/06/2026
+    "label_smooth": Sweep(
+        name="14_label_smooth",
+        axes={"label_smoothing": [0.0, 0.05, 0.1, 0.15]},
+        hold={
+            "gpt_v2": True,
+            "attn_type": "output_gated",
+            "vocab_size": 16_000,
+            "token_type": "unigram",
+            "optim_alg": "muonhybrid",
+            "optim_type": "wsd",
+            "lr": 1e-2,
+            "warmup_frac": 0.05,
+            "decay_frac": 0.1,
+            "decay_type": "sqrt",
+            "title_masking": True,
+            "n_layer": 12,
+            "d_model": 384,
+            "n_head": 6,
+            "block_size": 256,
+            "dropout": 0.2,
+            "residual": "layerscale"
+        },
+        x="label_smoothing",
+        tokens_per_step=4096,
+    ),
+
+    # --- R-Drop x size frontier ---
+    # 22/06/2026
+    "rdrop_size": Sweep(
+        name="13_rdrop_size",
+        axes={"d_model": [384, 512, 640], "rdrop": [0.0, 2.0, 4.0]},
+        hold={
+            "gpt_v2": True,
+            "attn_type": "output_gated",
+            "residual": "layerscale",
+            "amp": True,
+            "vocab_size": 16_000,
+            "token_type": "unigram",
+            "optim_alg": "muonhybrid",
+            "optim_type": "wsd",
+            "lr": 1e-2,
+            "warmup_frac": 0.05,
+            "decay_frac": 0.1,
+            "decay_type": "sqrt",
+            "title_masking": True,
+            "n_layer": 12,
+            "block_size": 256,
+            "dropout": 0.2,
+        },
+        resolve=heads_for(64),        # n_head = d_model/64 (head_dim 64)
+        x="d_model", group="rdrop",
+        tokens_per_step=4096,
+    ),
 }
