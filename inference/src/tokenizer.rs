@@ -15,7 +15,9 @@ pub struct Tokenizer {
 
 impl Tokenizer {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, Box<dyn Error>> {
-        let inner = HfTokenizer::from_file(path)?;
+        // tokenizers returns Box<dyn Error + Send + Sync>, which `?` can't coerce into
+        // our Box<dyn Error>; flatten it to a string error.
+        let inner = HfTokenizer::from_file(path).map_err(|e| e.to_string())?;
         Ok(Self { inner })
     }
 
