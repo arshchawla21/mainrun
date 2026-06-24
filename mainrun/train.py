@@ -23,43 +23,43 @@ from model.optimizer import build_optimizer
 @dataclass
 class Hyperparameters:
     # phase A
-    block_size: int = 128
-    batch_size: int = 64
+    block_size: int = 256
+    batch_size: int = 16
     vocab_size: int = 16_000
-    n_layer: int = 6
+    n_layer: int = 12
     n_head: int = 8
     d_model: int = 512
-    dropout: float = 0.1
-    lr: float = 6e-3
+    dropout: float = 0.2
+    lr: float = 1e-2
     lr_hybird: float = 3e-4
     weight_decay: float = 0.01
     evals_per_epoch: int = 3
 
     # improvements
-    token_type: str = 'bpe'   # 'bpe' | 'unigram' | 'wordpiece' | 'superbpe' | 'wordlevel'
+    token_type: str = 'unigram'   # 'bpe' | 'unigram' | 'wordpiece' | 'superbpe' | 'wordlevel'
     transition_ratio: float = 0.75  # superbpe only: fraction of vocab spent on stage-1 subwords
-    optim_type: str = 'cosine' # LR schedule: 'cosine' (CosineAnnealingLR) | 'wsd' (warmup-stable-decay)
-    optim_alg: str = 'sgd'   # gradient-descent algorithm: 'sgd' | 'adamw' | 'muonhybrid'
+    optim_type: str = 'wsd' # LR schedule: 'cosine' (CosineAnnealingLR) | 'wsd' (warmup-stable-decay)
+    optim_alg: str = 'muonhybrid'   # gradient-descent algorithm: 'sgd' | 'adamw' | 'muonhybrid'
     warmup_frac: float = 0.05  # wsd only: fraction of steps spent in linear warmup (inert for cosine)
-    decay_frac: float = 0.2    # wsd only: fraction of steps spent in the final decay (inert for cosine)
-    decay_type: str = 'cosine' # wsd only: decay shape -- 'linear' | 'cosine' | 'sqrt' (1-sqrt)
+    decay_frac: float = 0.1    # wsd only: fraction of steps spent in the final decay (inert for cosine)
+    decay_type: str = 'sqrt' # wsd only: decay shape -- 'linear' | 'cosine' | 'sqrt' (1-sqrt)
     norm_type: str = 'layernorm' # 'layernorm' | 'rmsnorm'
     mlp_type: str = 'gelu' # 'gelu' | 'swiglu'
     pos_type : str = 'learned' # 'learned' | 'rope'
     qk_norm: bool = False
-    bias: str = 'default'   # 'default' = original (Linear + LayerNorm biases) | 'off' = no bias anywhere
-    title_masking: bool = False 
+    bias: str = 'off'   # 'default' = original (Linear + LayerNorm biases) | 'off' = no bias anywhere
+    title_masking: bool = True
 
     # phase B
-    gpt_v2: bool = False # if true, we use the new model (gpt_v2, with our improvements from A present)
-    kv_cache: str = False 
-    attn_type: str = 'mha'   # v2 only: mha | single_head | value_residual | output_gated | differential
-    residual: str = 'none'   # v2 only: none | unet | embedding_shortcut | layerscale
+    gpt_v2: bool = True # if true, we use the new model (gpt_v2, with our improvements from A present)
+    kv_cache: str = False
+    attn_type: str = 'output_gated'   # v2 only: mha | single_head | value_residual | output_gated | differential
+    residual: str = 'layerscale'   # v2 only: none | unet | embedding_shortcut | layerscale
     attn_temp: bool = False  # v2 only: per-(layer,head) learned attention temperature
     label_smoothing: float = 0.0  # v2 only: soften targets in the TRAINING loss (eval stays hard CE)
-    rdrop: float = 0.0       # R-Drop: weight on the symmetric-KL between two dropout passes (0 = off)
-    amp: bool = False        # bf16 autocast on the training forward (fits bigger models + R-Drop on 12GB)
-    muon_weight_decay: float = 0.0  # decoupled weight decay on the Muon matrix group (0 = off; muonhybrid only). Muon ships without WD, leaving the 2D weights (qkv/proj/mlp) unregularised; a small decoupled WD here (p*=1-lr*wd) tightens Muon's implicit spectral-norm constraint and curbs over-memorisation. See 15_muon_wd.
+    rdrop: float = 2.0       # R-Drop: weight on the symmetric-KL between two dropout passes (0 = off)
+    amp: bool = True        # bf16 autocast on the training forward (fits bigger models + R-Drop on 12GB)
+    muon_weight_decay: float = 0.1  # decoupled weight decay on the Muon matrix group (0 = off; muonhybrid only). Muon ships without WD, leaving the 2D weights (qkv/proj/mlp) unregularised; a small decoupled WD here (p*=1-lr*wd) tightens Muon's implicit spectral-norm constraint and curbs over-memorisation. See 15_muon_wd.
 
     epochs: int = 7
     seed: int = 1337
