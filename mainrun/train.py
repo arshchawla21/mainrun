@@ -59,6 +59,7 @@ class Hyperparameters:
     label_smoothing: float = 0.0  # v2 only: soften targets in the TRAINING loss (eval stays hard CE)
     rdrop: float = 0.0       # R-Drop: weight on the symmetric-KL between two dropout passes (0 = off)
     amp: bool = False        # bf16 autocast on the training forward (fits bigger models + R-Drop on 12GB)
+    muon_weight_decay: float = 0.0  # decoupled weight decay on the Muon matrix group (0 = off; muonhybrid only). Muon ships without WD, leaving the 2D weights (qkv/proj/mlp) unregularised; a small decoupled WD here (p*=1-lr*wd) tightens Muon's implicit spectral-norm constraint and curbs over-memorisation. See 15_muon_wd.
 
     epochs: int = 7
     seed: int = 1337
