@@ -18,7 +18,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import ScalarFormatter
 
-VOCAB_SIZES = [1000, 2000, 4000, 8000, 12000, 16000, 20000, 24000, 28000, 32000]
+VOCAB_SIZES = [1000, 2000, 4000, 8000, 16000, 32000, 64000, 96000]
+TOKEN_TYPE = 'unigram' # "bpe"   # 'bpe' | 'unigram' | 'wordpiece'
 TERMS = ["JavaScript", "PostgreSQL", "Kubernetes",
         "open-source", "LLM", "API", "GitHub",
         "machine learning", "Show HN", "Ask HN"]
@@ -103,7 +104,7 @@ def main():
 
     for vc in VOCAB_SIZES:
         # train on train only, so no leakage in the selection metrics
-        tok = train_tokenizer(train_titles, vc, eos_token="<eos>")
+        tok = train_tokenizer(TOKEN_TYPE, train_titles, vc, eos_token="<eos>")
 
         # analyse metrics
         stats = evaluate_tokenizer(tok, val_titles)

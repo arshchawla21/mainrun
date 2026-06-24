@@ -21,3 +21,24 @@ Thumbs.db
 
 model.pt
 tokenizer.json
+
+.claude
+arc/
+
+*visualise.py
+tmp/
+
+critic/
+eval*
+
+_visualise_template.py
+analyse_data.py
+attn_viz.py
+embed_diag.py
+loss.log
+smoke.log
+
+/report
+report.md
+report.html
+output.pdf

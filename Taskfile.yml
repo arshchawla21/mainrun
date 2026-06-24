@@ -17,11 +17,13 @@ tasks:
     cmds:
       - python3 train.py
 
-  sweep:
+  # unified benchmark engine; pick the experiment from experiments.py
+  #   task bench -- run size      |    task bench -- plot size
+  bench:
     deps: [download]
     dir: mainrun
     cmds:
-      - python3 sweep.py
+      - python3 bench.py {{.CLI_ARGS}}
 
   submit:
     deps: [checkpoint]
