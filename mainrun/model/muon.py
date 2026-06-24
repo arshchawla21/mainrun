@@ -35,13 +35,15 @@ class Muon(torch.optim.Optimizer):
     lr is much larger than AdamW's (typically ~0.02-0.05)."""
 
     def __init__(self, params, lr: float = 0.02, momentum: float = 0.95,
-                 nesterov: bool = True, ns_steps: int = 5):
-        super().__init__(params, dict(lr=lr, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps))
+                 nesterov: bool = True, ns_steps: int = 5, weight_decay: float = 0.0):
+        super().__init__(params, dict(lr=lr, momentum=momentum, nesterov=nesterov,
+                                      ns_steps=ns_steps, weight_decay=weight_decay))
 
     @torch.no_grad()
     def step(self):
         for group in self.param_groups:
             mom = group["momentum"]
+            wd = group.get("weight_decay", 0.0)        # decoupled WD (0 = off -> exact original behaviour)
             for p in group["params"]:
                 if p.grad is None:
                     continue
@@ -53,6 +55,8 @@ class Muon(torch.optim.Optimizer):
                 buf.mul_(mom).add_(g)
                 g = g.add(buf, alpha=mom) if group["nesterov"] else buf
                 g = zeropower_via_newtonschulz5(g, steps=group["ns_steps"])
+                if wd > 0:                             # decoupled weight decay, scaled by the current LR
+                    p.mul_(1.0 - group["lr"] * wd)
                 # shape-aware scale -> update RMS stays ~consistent across matrix aspect ratios
                 scale = max(1.0, p.size(0) / p.size(1)) ** 0.5
                 p.add_(g, alpha=-group["lr"] * scale)

@@ -92,7 +92,8 @@ def build_optimizer(args, model, max_steps: int):
             if not p.requires_grad:
                 continue
             (muon_p if (p.ndim == 2 and 'emb' not in name) else adamw_p).append(p)
-        muon = Muon(muon_p, lr=args.lr)                                   # 2D matrices: swept lr
+        muon = Muon(muon_p, lr=args.lr,                                   # 2D matrices: swept lr
+                    weight_decay=getattr(args, 'muon_weight_decay', 0.0)) # decoupled WD (0 = off; old configs unaffected)
         aux = torch.optim.AdamW(adamw_p, lr=args.lr_hybird,              # embeddings/head/norms/biases
                                 weight_decay=args.weight_decay)
         opt = Optimizer([muon, aux])
