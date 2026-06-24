@@ -456,4 +456,22 @@ EXPERIMENTS = {
         x="variant",
         tokens_per_step=4096,
     ),
+
+    # --- Muon-group weight decay: the anti-overfit lever.
+    # 23/06/2026
+    "muon_wd": Sweep(
+        name="15_muon_wd",
+        axes={"muon_weight_decay": [0.0, 0.03, 0.05, 0.1, 0.15, 0.3]},
+        hold={
+            "gpt_v2": True, "attn_type": "output_gated", "residual": "layerscale",
+            "rdrop": 2.0, "amp": True,
+            "vocab_size": 16_000, "token_type": "unigram",
+            "n_layer": 12, "d_model": 512, "n_head": 8, "block_size": 256, "dropout": 0.2,
+            "optim_alg": "muonhybrid", "optim_type": "wsd", "lr": 1e-2, "lr_hybird": 3e-4,
+            "warmup_frac": 0.05, "decay_frac": 0.1, "decay_type": "sqrt",
+            "title_masking": True, "weight_decay": 0.01, "bias": "off"
+        },
+        x="muon_weight_decay",
+        tokens_per_step=4096,
+    ),
 }
