@@ -17,7 +17,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 from model.config import GPTConfig
-from model.gpt import RMSNorm, MLP, RotaryEmbedding, apply_rope
+from model.gpt import RMSNorm, MLP, SwiGLU, RotaryEmbedding, apply_rope, _use_bias
 
 
 # ============================ attention variants (Phase B) ============================
@@ -33,16 +33,22 @@ class Attention(nn.Module):
         self.n_head   = n_head
         self.head_dim = cfg.d_model // n_head
         self.dropout  = cfg.dropout
-        self.qkv  = nn.Linear(cfg.d_model, 3 * cfg.d_model)
-        self.proj = nn.Linear(cfg.d_model, cfg.d_model)
+        self.qkv  = nn.Linear(cfg.d_model, 3 * cfg.d_model, bias=_use_bias(cfg))
+        self.proj = nn.Linear(cfg.d_model, cfg.d_model, bias=_use_bias(cfg))
         self.resid_drop = nn.Dropout(cfg.dropout)
         # per-head learned attention temperature: scale q by exp(g_h) (zero-init -> 1 -> no-op at step 0)
         self.log_temp = nn.Parameter(torch.zeros(n_head)) if cfg.attn_temp else None
+        self.qk_norm = cfg.qk_norm                         # rollback ablation: optional QK-norm (Phase A had it off)
+        if cfg.qk_norm:
+            self.q_norm, self.k_norm = RMSNorm(self.head_dim), RMSNorm(self.head_dim)
 
     def _qkv(self, x):
         B, T, _ = x.size()
         qkv = self.qkv(x).view(B, T, 3, self.n_head, self.head_dim).transpose(1, 3)
-        return qkv[..., 0, :, :], qkv[..., 1, :, :], qkv[..., 2, :, :]   # each (B, nh, T, hd)
+        q, k, v = qkv[..., 0, :, :], qkv[..., 1, :, :], qkv[..., 2, :, :]   # each (B, nh, T, hd)
+        if self.qk_norm:
+            q, k = self.q_norm(q), self.k_norm(k)
+        return q, k, v
 
     def _temp(self, q):
         """Per-head softmax sharpness. Scaling q scales the q.k scores, so exp(g_h)>1 sharpens a head's
@@ -89,7 +95,7 @@ class OutputGatedAttention(Attention):
     """Per-head sigmoid gate on the attention output.  # Qiu et al. 2025, arXiv:2505.06708"""
     def __init__(self, cfg: GPTConfig, n_head):
         super().__init__(cfg, n_head)
-        self.gate = nn.Linear(cfg.d_model, n_head)
+        self.gate = nn.Linear(cfg.d_model, n_head, bias=_use_bias(cfg))
 
     def forward(self, x, cos, sin, mask=None, v0=None):
         B, T, C = x.size()
@@ -132,7 +138,7 @@ class GatedValueResidualAttention(Attention):
     def __init__(self, cfg: GPTConfig, n_head):
         super().__init__(cfg, n_head)
         self.lam  = nn.Parameter(torch.zeros(1))
-        self.gate = nn.Linear(cfg.d_model, n_head)
+        self.gate = nn.Linear(cfg.d_model, n_head, bias=_use_bias(cfg))
 
     def forward(self, x, cos, sin, mask=None, v0=None):
         B, T, C = x.size()
@@ -163,7 +169,7 @@ class Block(nn.Module):
         self.ln1  = RMSNorm(cfg.d_model)
         self.ln2  = RMSNorm(cfg.d_model)
         self.attn = attn_cls(cfg, n_head)
-        self.mlp  = MLP(cfg)
+        self.mlp  = SwiGLU(cfg) if cfg.mlp_type == 'swiglu' else MLP(cfg)   # rollback ablation: SwiGLU vs GELU
         self.layerscale = cfg.residual == 'layerscale'
         if self.layerscale:                            # per-channel residual scale, init 0.1 (CaiT, <=18 layers)
             self.ls1 = nn.Parameter(torch.full((cfg.d_model,), 0.1))
