@@ -29,19 +29,54 @@ python export/export.py ../sweeps/<run_dir>      # writes ./weights/{model.safet
 
 ## 2. Build & run
 
+Build once in release (the `--` separates cargo's args from the engine's):
+
 ```bash
+cargo build --release
+```
+
+Then run the binary directly (or via `cargo run --release --`):
+
+```bash
+# basic generation
+./target/release/inference generate --prompt "Show HN: "
+
+# longer sample, custom sampling
+./target/release/inference generate --prompt "Ask HN: " --max-tokens 120 --temperature 0.8 --top-k 40
+
+# greedy / deterministic (argmax, ignores seed)
+./target/release/inference generate --prompt "Show HN: " --temperature 0
+
+# reproducible sampling: same seed -> identical output
+./target/release/inference generate --prompt "The " --seed 42
+
+# empty prompt: seeds with <eos> (the start token) and generates a fresh title
+./target/release/inference generate --prompt ""
+
+# point at a different export dir
+./target/release/inference --weights weights generate --prompt "Show HN: "
+
+# equivalently, through cargo
 cargo run --release -- generate --prompt "Show HN: " --max-tokens 200
 ```
+
+Flags: `--prompt` (text to continue), `--max-tokens` (default 200), `--temperature`
+(default 0.8; `0` = greedy), `--top-k` (default 40; `0` = off), `--seed` (default 1337),
+`--weights` (export dir, default `weights`). The prompt is echoed and new tokens stream to
+stdout; progress/info lines go to stderr, so `2>/dev/null` gives just the generated text.
 
 ## Layout
 
 | file            | what it does |
 |-----------------|--------------|
 | `src/main.rs`   | CLI; loads everything and runs the generation loop |
-| `src/config.rs` | `ModelConfig`, deserialized from `meta.json` |
+| `src/constants.rs` | compile-time model shape + a `meta.json` sanity check |
 | `src/tokenizer.rs` | wrapper over the `tokenizers` crate (`tokenizer.json`) |
 | `src/math.rs`   | numeric kernels: matvec, rmsnorm, gelu, softmax, rope |
 | `src/model.rs`  | weight loading + the forward pass |
 | `src/cache.rs`  | the KV cache |
-| `src/sample.rs` | logits → next token (temperature, top-k) |
-| `export/export.py` | `model.pt` → safetensors + meta.json |
+| `src/sample.rs` | logits -> next token (temperature, top-k) |
+| `export/export.py` | `model.pt` -> safetensors + meta.json |
+
+# Acknowledgements
+https://github.com/srush/llama2.rs

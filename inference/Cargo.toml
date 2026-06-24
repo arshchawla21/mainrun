@@ -16,6 +16,8 @@ libm = "0.2"
 tokenizers = "0.20"
 # the CLI
 clap = { version = "4", features = ["derive"] }
+# data-parallel matvec across output rows
+rayon = "1"
 
 # inference here is memory-bound, not compute-bound, but -O still helps the matvecs
 [profile.release]

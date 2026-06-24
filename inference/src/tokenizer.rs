@@ -34,4 +34,11 @@ impl Tokenizer {
             .decode(ids, true)
             .expect("tokenizer decode failed")
     }
+
+    /// Id of the `<eos>` token (the title delimiter / generation stop token).
+    pub fn eos_id(&self) -> u32 {
+        self.inner
+            .token_to_id("<eos>")
+            .expect("tokenizer has no <eos> token")
+    }
 }
