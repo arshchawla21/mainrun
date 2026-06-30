@@ -9,7 +9,8 @@ env/
 venv/
 .env
 
-mainrun*.log
+# mainrun*.log
+# loss.log
 
 node_modules/
 
@@ -35,7 +36,7 @@ _visualise_template.py
 analyse_data.py
 attn_viz.py
 embed_diag.py
-loss.log
+
 smoke.log
 
 /report
